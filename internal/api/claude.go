@@ -53,12 +53,15 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 	// Defer stopping the spinner
 	defer s.Stop()
 
+	// Prepare the messages for the API request
+	messages := []map[string]string{
+		{"role": "user", "content": query},
+	}
+
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"model":      "claude-3-opus-20240229",
 		"max_tokens": 1000,
-		"messages": []map[string]string{
-			{"role": "user", "content": query},
-		},
+		"messages":   messages,
 	})
 	if err != nil {
 		log.Printf("Error creating request body: %v", err)
@@ -74,9 +77,6 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
-
-	// log.Printf("Claude API config: %+v", c)
-	// log.Printf("Request: %+v", req)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

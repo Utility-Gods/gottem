@@ -6,9 +6,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Utility-Gods/gottem/internal/api"
 	"github.com/Utility-Gods/gottem/internal/db"
+	"github.com/manifoldco/promptui"
 )
 
 func RunCLI(app *api.App) {
@@ -20,7 +22,7 @@ func RunCLI(app *api.App) {
 		case "1":
 			startNewChat(app)
 		case "2":
-			viewPreviousChats()
+			continuePreviousChat(app)
 		case "3":
 			viewAPIKeys()
 		case "4":
@@ -34,7 +36,7 @@ func RunCLI(app *api.App) {
 func displayMainMenu() {
 	fmt.Println("\n--- Multi-API CLI Menu ---")
 	fmt.Println("1. Start a new chat")
-	fmt.Println("2. View previous chats")
+	fmt.Println("2. Continue a previous chat")
 	fmt.Println("3. View API keys")
 	fmt.Println("4. Exit to main menu")
 }
@@ -62,6 +64,7 @@ func startNewChat(app *api.App) {
 		return
 	}
 
+	var messages []db.Message
 	for {
 		input := getUserInput("> ")
 		if strings.ToLower(input) == "exit" {
@@ -75,13 +78,19 @@ func startNewChat(app *api.App) {
 		}
 
 		apiShortcut, query := parts[0], parts[1]
-		response, err := app.HandleQuery(apiShortcut, query, chatID)
+		response, err := app.HandleQuery(apiShortcut, query, chatID, messages)
 		if err != nil {
 			fmt.Println("Error:", err)
 			continue
 		}
 
 		fmt.Println("Response:", response)
+
+		// Add the new messages to the messages slice
+		messages = append(messages,
+			db.Message{Role: "user", APIName: apiShortcut, Content: query},
+			db.Message{Role: "assistant", APIName: apiShortcut, Content: response},
+		)
 	}
 }
 
@@ -149,4 +158,118 @@ func maskAPIKey(apiKey string) string {
 		return strings.Repeat("*", len(apiKey))
 	}
 	return apiKey[:4] + strings.Repeat("*", len(apiKey)-8) + apiKey[len(apiKey)-4:]
+}
+
+func continuePreviousChat(app *api.App) {
+	chats, err := db.GetChats()
+	if err != nil {
+		fmt.Printf("Error retrieving chats: %v\n", err)
+		return
+	}
+
+	if len(chats) == 0 {
+		fmt.Println("No previous chats found.")
+		return
+	}
+
+	templates := &promptui.SelectTemplates{
+		Label:    "{{ . }}",
+		Active:   "\U0001F449 {{ .Title | cyan }} ({{ .CreatedAt | fdate }})",
+		Inactive: "  {{ .Title | cyan }} ({{ .CreatedAt | fdate }})",
+		Selected: "\U0001F449 {{ .Title | red | cyan }}",
+		Details: `
+--------- Chat ----------
+{{ "ID:" | faint }}	{{ .ID }}
+{{ "Title:" | faint }}	{{ .Title }}
+{{ "Created:" | faint }}	{{ .CreatedAt | fdate }}
+{{ "Updated:" | faint }}	{{ .UpdatedAt | fdate }}`,
+	}
+
+	funcMap := promptui.FuncMap
+	funcMap["fdate"] = func(t time.Time) string {
+		return t.Format("2006-01-02 15:04:05")
+	}
+
+	prompt := promptui.Select{
+		Label:     "Select a chat to continue",
+		Items:     chats,
+		Templates: templates,
+		Size:      10,
+		Searcher: func(input string, index int) bool {
+			chat := chats[index]
+			title := strings.Replace(strings.ToLower(chat.Title), " ", "", -1)
+			input = strings.Replace(strings.ToLower(input), " ", "", -1)
+			return strings.Contains(title, input)
+		},
+	}
+
+	index, _, err := prompt.Run()
+	if err != nil {
+		fmt.Printf("Prompt failed %v\n", err)
+		return
+	}
+
+	selectedChat := chats[index]
+	displayChatHistory(selectedChat.ID)
+	continueChat(app, selectedChat.ID, nil)
+}
+
+func displayChatHistory(chatID int) {
+	messages, err := db.GetChatMessages(chatID)
+	if err != nil {
+		fmt.Printf("Error retrieving messages: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n--- Chat History (ID: %d) ---\n", chatID)
+	for _, msg := range messages {
+		fmt.Printf("[%s] %s (%s): %s\n",
+			msg.CreatedAt.Format("2006-01-02 15:04:05"),
+			msg.Role,
+			msg.APIName,
+			msg.Content,
+		)
+	}
+	fmt.Println("----------------------------")
+}
+
+func continueChat(app *api.App, chatID int, previousMessages []db.Message) {
+	if previousMessages == nil {
+		var err error
+		previousMessages, err = db.GetChatMessages(chatID)
+		if err != nil {
+			fmt.Printf("Error retrieving previous messages: %v\n", err)
+			return
+		}
+	}
+
+	fmt.Println("\nContinue the conversation. Type 'exit' to end the chat.")
+
+	for {
+		input := getUserInput("> ")
+		if strings.ToLower(input) == "exit" {
+			break
+		}
+
+		parts := strings.SplitN(input, " ", 2)
+		if len(parts) != 2 {
+			fmt.Println("Invalid input. Please use the format: <API_SHORTCUT> <QUERY>")
+			continue
+		}
+
+		apiShortcut, query := parts[0], parts[1]
+		response, err := app.HandleQuery(apiShortcut, query, chatID, previousMessages)
+		if err != nil {
+			fmt.Println("Error:", err)
+			continue
+		}
+
+		fmt.Println("Response:", response)
+
+		// Add the new messages to previousMessages
+		previousMessages = append(previousMessages,
+			db.Message{Role: "user", APIName: apiShortcut, Content: query},
+			db.Message{Role: "assistant", APIName: apiShortcut, Content: response},
+		)
+	}
 }

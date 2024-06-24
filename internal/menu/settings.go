@@ -11,7 +11,7 @@ func SettingsMenu() {
 	for {
 		prompt := promptui.Select{
 			Label: "Settings Menu",
-			Items: []string{"API Keys", "Other Settings", "Back to Main Menu"},
+			Items: []string{"API Keys", "Back to Main Menu"},
 		}
 
 		_, result, err := prompt.Run()
@@ -23,9 +23,6 @@ func SettingsMenu() {
 		switch result {
 		case "API Keys":
 			APIKeyMenu()
-		case "Other Settings":
-			// Placeholder for other settings
-			fmt.Println("Other settings not implemented yet.")
 		case "Back to Main Menu":
 			return
 		}
