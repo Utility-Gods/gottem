@@ -9,10 +9,9 @@ import (
 
 // App represents the main application structure
 type App struct {
-	APIs map[string]types.API
+	APIs map[string]types.APIInfo
 }
 
-// NewApp creates and initializes a new App instance
 func NewApp() *App {
 	return &App{
 		APIs: GetAPIHandlers(),
@@ -62,8 +61,8 @@ func prepareContext(messages []db.Message) string {
 }
 
 // GetAvailableAPIs returns a list of available APIs
-func (a *App) GetAvailableAPIs() []types.API {
-	apis := make([]types.API, 0, len(a.APIs))
+func (a *App) GetAvailableAPIs() []types.APIInfo {
+	apis := make([]types.APIInfo, 0, len(a.APIs))
 	for _, api := range a.APIs {
 		apis = append(apis, api)
 	}

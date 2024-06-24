@@ -2,24 +2,29 @@ package cli
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
-	"os/exec"
-	"strings"
+	"time"
 
+	"github.com/Utility-Gods/gottem/internal/api"
 	"github.com/Utility-Gods/gottem/internal/db"
+	"github.com/Utility-Gods/gottem/pkg/types"
 	"github.com/gdamore/tcell/v2"
+	"github.com/manifoldco/promptui"
 )
 
 type Editor struct {
-	screen     tcell.Screen
-	messages   []db.Message
-	cursorPos  int
-	editMode   bool
-	editBuffer string
+	screen      tcell.Screen
+	app         *api.App
+	chatID      int
+	messages    []db.Message
+	content     []string
+	cursor      struct{ x, y int }
+	scroll      int
+	status      string
+	apis        []types.APIInfo
+	selectedAPI int
 }
 
-func NewEditor(messages []db.Message) (*Editor, error) {
+func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error) {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return nil, err
@@ -28,52 +33,53 @@ func NewEditor(messages []db.Message) (*Editor, error) {
 		return nil, err
 	}
 
-	return &Editor{
-		screen:   screen,
-		messages: messages,
-	}, nil
+	apis := app.GetAvailableAPIs()
+
+	e := &Editor{
+		screen:      screen,
+		app:         app,
+		chatID:      chatID,
+		messages:    messages,
+		content:     []string{""},
+		apis:        apis,
+		selectedAPI: 0,
+	}
+	e.loadMessages()
+	return e, nil
+}
+
+func (e *Editor) loadMessages() {
+	for _, msg := range e.messages {
+		e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
+			msg.CreatedAt.Format("2006-01-02 15:04:05"),
+			msg.Role,
+			msg.APIName,
+			msg.Content,
+		))
+		e.content = append(e.content, "")
+	}
+	if len(e.content) == 0 {
+		e.content = append(e.content, "")
+	}
 }
 
 func (e *Editor) Run() error {
 	defer e.screen.Fini()
 
+	e.status = "Press Ctrl+Enter to send query, Ctrl+A to select API, Ctrl+C to exit"
+
 	for {
 		e.draw()
+		e.screen.Show()
+
 		ev := e.screen.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			if e.editMode {
-				if ev.Key() == tcell.KeyEscape {
-					e.editMode = false
-					e.messages[e.cursorPos].Content = e.editBuffer
-				} else if ev.Key() == tcell.KeyEnter {
-					e.editBuffer += "\n"
-				} else if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
-					if len(e.editBuffer) > 0 {
-						e.editBuffer = e.editBuffer[:len(e.editBuffer)-1]
-					}
-				} else if ev.Rune() != 0 {
-					e.editBuffer += string(ev.Rune())
-				}
-			} else {
-				switch ev.Key() {
-				case tcell.KeyEscape:
-					return nil
-				case tcell.KeyUp:
-					if e.cursorPos > 0 {
-						e.cursorPos--
-					}
-				case tcell.KeyDown:
-					if e.cursorPos < len(e.messages)-1 {
-						e.cursorPos++
-					}
-				case tcell.KeyRune:
-					if ev.Rune() == 'i' {
-						e.editMode = true
-						e.editBuffer = e.messages[e.cursorPos].Content
-					}
-				}
+			if e.handleKeyEvent(ev) {
+				return nil // Exit if handleKeyEvent returns true
 			}
+		case *tcell.EventResize:
+			e.screen.Sync()
 		}
 	}
 }
@@ -82,132 +88,153 @@ func (e *Editor) draw() {
 	e.screen.Clear()
 	width, height := e.screen.Size()
 
-	for i, msg := range e.messages {
-		y := i * 3
-		if y >= height {
-			break
-		}
-
-		style := tcell.StyleDefault
-		if i == e.cursorPos {
-			style = style.Reverse(true)
-		}
-
-		role := fmt.Sprintf("[%s]", msg.Role)
-		e.drawText(0, y, width, role, style)
-
-		content := msg.Content
-		if e.editMode && i == e.cursorPos {
-			content = e.editBuffer
-		}
-		e.drawText(0, y+1, width, content, style)
-	}
-
-	e.screen.Show()
-}
-
-func (e *Editor) drawText(x, y, maxWidth int, text string, style tcell.Style) {
-	for i, c := range text {
-		if i >= maxWidth {
-			break
-		}
-		e.screen.SetContent(x+i, y, c, nil, style)
-	}
-}
-
-func EditChat(messages []db.Message) ([]db.Message, error) {
-	editor, err := NewEditor(messages)
-	if err != nil {
-		return nil, err
-	}
-
-	err = editor.Run()
-	if err != nil {
-		return nil, err
-	}
-
-	return editor.messages, nil
-}
-
-
-func EditChatWithExternalEditor(messages []db.Message) ([]db.Message, error) {
-	// Create a temporary file
-	tempFile, err := ioutil.TempFile("", "chat_history_*.txt")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(tempFile.Name())
-
-	// Write chat history to the temp file
-	for _, msg := range messages {
-		_, err := tempFile.WriteString(fmt.Sprintf("[%s] %s: %s\n\n", msg.Role, msg.APIName, msg.Content))
-		if err != nil {
-			return nil, fmt.Errorf("failed to write to temp file: %w", err)
-		}
-	}
-	tempFile.Close()
-
-	// Determine which editor to use
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vim" // Default to vim if EDITOR is not set
-	}
-
-	// Open the temp file in the editor
-	cmd := exec.Command(editor, tempFile.Name())
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err = cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run editor: %w", err)
-	}
-
-	// Read the edited content
-	editedContent, err := ioutil.ReadFile(tempFile.Name())
-	if err != nil {
-		return nil, fmt.Errorf("failed to read edited file: %w", err)
-	}
-
-	// Parse the edited content back into messages
-	editedMessages := parseEditedContent(string(editedContent))
-
-	return editedMessages, nil
-}
-
-func parseEditedContent(content string) []db.Message {
-	var editedMessages []db.Message
-	lines := strings.Split(content, "\n")
-	var currentMessage db.Message
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "[") && strings.Contains(line, "]") {
-			// This is a new message header
-			if currentMessage.Role != "" {
-				editedMessages = append(editedMessages, currentMessage)
-				currentMessage = db.Message{}
-			}
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				header := strings.TrimSpace(parts[0])
-				headerParts := strings.SplitN(strings.Trim(header, "[]"), " ", 2)
-				if len(headerParts) == 2 {
-					currentMessage.Role = headerParts[0]
-					currentMessage.APIName = headerParts[1]
+	for y := 0; y < height-2; y++ {
+		lineIndex := e.scroll + y
+		if lineIndex >= 0 && lineIndex < len(e.content) {
+			line := e.content[lineIndex]
+			for x, ch := range line {
+				if x < width {
+					e.screen.SetContent(x, y, ch, nil, tcell.StyleDefault)
 				}
-				currentMessage.Content = strings.TrimSpace(parts[1])
 			}
-		} else if currentMessage.Role != "" {
-			// This is content for the current message
-			currentMessage.Content += "\n" + line
 		}
 	}
 
-	// Add the last message if it exists
-	if currentMessage.Role != "" {
-		editedMessages = append(editedMessages, currentMessage)
+	// Draw API selection
+	apiStyle := tcell.StyleDefault.Background(tcell.ColorDarkBlue).Foreground(tcell.ColorWhite)
+	apiText := fmt.Sprintf("Selected API: %s", e.apis[e.selectedAPI].Name)
+	for x, ch := range apiText {
+		if x < width {
+			e.screen.SetContent(x, height-2, ch, nil, apiStyle)
+		}
 	}
 
-	return editedMessages
+	// Draw status bar
+	statusStyle := tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite)
+	statusText := fmt.Sprintf(" Cursor: (%d, %d) | %s", e.cursor.x, e.cursor.y, e.status)
+	for x := 0; x < width; x++ {
+		if x < len(statusText) {
+			e.screen.SetContent(x, height-1, rune(statusText[x]), nil, statusStyle)
+		} else {
+			e.screen.SetContent(x, height-1, ' ', nil, statusStyle)
+		}
+	}
+
+	e.screen.ShowCursor(e.cursor.x, e.cursor.y-e.scroll)
+}
+
+func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyCtrlC:
+		return true // Signal to exit
+	case tcell.KeyCtrlE, tcell.KeyCtrlJ:
+		e.sendQuery()
+		return false
+	case tcell.KeyCtrlA:
+		e.selectAPI()
+		return false
+	case tcell.KeyUp:
+		if e.cursor.y > 0 {
+			e.cursor.y--
+			if e.cursor.y < e.scroll {
+				e.scroll = e.cursor.y
+			}
+		}
+	case tcell.KeyDown:
+		if e.cursor.y < len(e.content)-1 {
+			e.cursor.y++
+			_, height := e.screen.Size()
+			if e.cursor.y >= e.scroll+height-2 {
+				e.scroll = e.cursor.y - height + 3
+			}
+		}
+	case tcell.KeyLeft:
+		if e.cursor.x > 0 {
+			e.cursor.x--
+		}
+	case tcell.KeyRight:
+		if e.cursor.x < len(e.content[e.cursor.y]) {
+			e.cursor.x++
+		}
+	case tcell.KeyEnter:
+		e.content = append(e.content[:e.cursor.y+1], e.content[e.cursor.y:]...)
+		e.content[e.cursor.y+1] = ""
+		e.cursor.y++
+		e.cursor.x = 0
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if e.cursor.x > 0 {
+			line := e.content[e.cursor.y]
+			e.content[e.cursor.y] = line[:e.cursor.x-1] + line[e.cursor.x:]
+			e.cursor.x--
+		} else if e.cursor.y > 0 {
+			e.cursor.y--
+			e.cursor.x = len(e.content[e.cursor.y])
+			e.content[e.cursor.y] += e.content[e.cursor.y+1]
+			e.content = append(e.content[:e.cursor.y+1], e.content[e.cursor.y+2:]...)
+		}
+	default:
+		if ev.Rune() != 0 {
+			line := e.content[e.cursor.y]
+			e.content[e.cursor.y] = line[:e.cursor.x] + string(ev.Rune()) + line[e.cursor.x:]
+			e.cursor.x++
+		}
+	}
+	return false
+}
+
+func (e *Editor) selectAPI() {
+	e.screen.Fini() // Temporarily finalize the screen
+
+	prompt := promptui.Select{
+		Label: "Select API",
+		Items: e.apis,
+		Templates: &promptui.SelectTemplates{
+			Label:    "{{ . }}",
+			Active:   "\U0001F449 {{ .Name | cyan }}",
+			Inactive: "  {{ .Name | white }}",
+			Selected: "\U0001F449 {{ .Name | red | cyan }}",
+		},
+	}
+
+	index, _, err := prompt.Run()
+	if err != nil {
+		e.status = fmt.Sprintf("API selection failed: %v", err)
+	} else {
+		e.selectedAPI = index
+		e.status = fmt.Sprintf("Selected API: %s", e.apis[e.selectedAPI].Name)
+	}
+
+	e.screen.Init() // Reinitialize the screen
+	e.screen.Clear()
+}
+
+func (e *Editor) sendQuery() {
+	query := e.content[len(e.content)-1]
+	apiInfo := e.apis[e.selectedAPI]
+
+	e.status = "Sending query..."
+	e.draw()
+	e.screen.Show()
+
+	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chatID, e.messages)
+	if err != nil {
+		e.status = fmt.Sprintf("Error: %v", err)
+		return
+	}
+
+	newMessage := fmt.Sprintf("[%s] assistant (%s): %s",
+		time.Now().Format("2006-01-02 15:04:05"),
+		apiInfo.Name,
+		response,
+	)
+	e.content = append(e.content, newMessage, "")
+	e.cursor.y = len(e.content) - 1
+	e.cursor.x = 0
+
+	e.messages = append(e.messages,
+		db.Message{Role: "user", APIName: apiInfo.Name, Content: query, CreatedAt: time.Now()},
+		db.Message{Role: "assistant", APIName: apiInfo.Name, Content: response, CreatedAt: time.Now()},
+	)
+
+	e.status = "Query sent and response received. Press Ctrl+Enter to send another query, Ctrl+A to change API, Ctrl+C to exit"
 }

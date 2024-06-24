@@ -7,23 +7,23 @@ import (
 )
 
 // GetAPIHandlers returns a map of all available API handlers
-func GetAPIHandlers() map[string]types.API {
-	handlers := make(map[string]types.API)
+func GetAPIHandlers() map[string]types.APIInfo {
+	handlers := make(map[string]types.APIInfo)
 
 	claudeAPI, err := NewClaudeAPI()
 	if err != nil {
 		log.Printf("Failed to initialize Claude API: %v", err)
-		handlers["c"] = types.API{Name: "Claude API (Not Configured)", Shortcut: "c", Handler: &ErrorAPI{Err: err}}
+		handlers["c"] = types.APIInfo{Name: "Claude API (Not Configured)", Shortcut: "c", Handler: &ErrorAPI{Err: err}}
 	} else {
-		handlers["c"] = types.API{Name: "Claude API", Shortcut: "c", Handler: claudeAPI}
+		handlers["c"] = types.APIInfo{Name: "Claude API", Shortcut: "c", Handler: claudeAPI}
 	}
 
 	openAIAPI, err := NewOpenAIAPI()
 	if err != nil {
 		log.Printf("Failed to initialize OpenAI API: %v", err)
-		handlers["o"] = types.API{Name: "OpenAI API (Not Configured)", Shortcut: "o", Handler: &ErrorAPI{Err: err}}
+		handlers["o"] = types.APIInfo{Name: "OpenAI API (Not Configured)", Shortcut: "o", Handler: &ErrorAPI{Err: err}}
 	} else {
-		handlers["o"] = types.API{Name: "OpenAI API", Shortcut: "o", Handler: openAIAPI}
+		handlers["o"] = types.APIInfo{Name: "OpenAI API", Shortcut: "o", Handler: openAIAPI}
 	}
 
 	return handlers

@@ -74,9 +74,6 @@ func (o *OpenAIAPI) HandleQuery(query string) string {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+o.apiKey)
 
-	log.Printf("OpenAI API config: %+v", o)
-	log.Printf("Request: %+v", req)
-
 	resp, err := o.client.Do(req)
 	if err != nil {
 		log.Printf("Error making request to OpenAI API: %v", err)

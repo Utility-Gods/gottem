@@ -9,7 +9,7 @@ import (
 
 // App represents the main application
 type App struct {
-	APIs map[string]types.API
+	APIs map[string]types.APIInfo
 }
 
 // NewApp creates a new instance of the application
@@ -29,8 +29,8 @@ func (a *App) HandleQuery(apiShortcut, query string) (string, error) {
 }
 
 // GetAvailableAPIs returns a list of available APIs
-func (a *App) GetAvailableAPIs() []types.API {
-	apis := make([]types.API, 0, len(a.APIs))
+func (a *App) GetAvailableAPIs() []types.APIInfo {
+	apis := make([]types.APIInfo, 0, len(a.APIs))
 	for _, api := range a.APIs {
 		apis = append(apis, api)
 	}
