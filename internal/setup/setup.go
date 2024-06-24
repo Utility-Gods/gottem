@@ -11,7 +11,7 @@ func RunSetup() error {
 	for {
 		prompt := promptui.Select{
 			Label: "Select action",
-			Items: []string{"Set Claude API Key", "Set Other API Key", "Exit Setup"},
+			Items: []string{"Set Claude API Key", "Set OpenAI API Key", "Set Other API Key", "Exit Setup"},
 		}
 
 		_, result, err := prompt.Run()
@@ -22,6 +22,10 @@ func RunSetup() error {
 		switch result {
 		case "Set Claude API Key":
 			if err := setAPIKey("claude"); err != nil {
+				return err
+			}
+		case "Set OpenAI API Key":
+			if err := setAPIKey("openai"); err != nil {
 				return err
 			}
 		case "Set Other API Key":
