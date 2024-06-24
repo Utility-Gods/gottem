@@ -6,18 +6,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Utility-Gods/gottem/internal/app"
+	"github.com/Utility-Gods/gottem/internal/api"
 )
 
 // RunCLI starts the CLI interface
-func RunCLI(app *app.App) {
+func RunCLI(app *api.App) {
 	fmt.Println("Welcome to the Multi-API CLI!")
 	fmt.Println("Available APIs:")
 	for _, api := range app.GetAvailableAPIs() {
 		fmt.Printf("%s: %s\n", api.Shortcut, api.Name)
 	}
 	fmt.Println("Enter your query in the format: <API_SHORTCUT> <QUERY>")
-	fmt.Println("To quit, type 'exit'")
+	fmt.Println("To go back to the main menu, type 'back'")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -25,9 +25,9 @@ func RunCLI(app *app.App) {
 		scanner.Scan()
 		input := scanner.Text()
 
-		if strings.ToLower(input) == "exit" {
-			fmt.Println("Goodbye!")
-			break
+		if strings.ToLower(input) == "back" {
+			fmt.Println("Returning to main menu...")
+			return
 		}
 
 		parts := strings.SplitN(input, " ", 2)
@@ -45,9 +45,5 @@ func RunCLI(app *app.App) {
 		}
 
 		fmt.Println(response)
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "reading standard input:", err)
 	}
 }
