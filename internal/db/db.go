@@ -11,6 +11,15 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type Message struct {
+	ID        int
+	ChatID    int
+	Role      string
+	APIName   string
+	Content   string
+	CreatedAt time.Time
+}
+
 var db *sql.DB
 
 func InitDB() error {
@@ -215,15 +224,6 @@ func GetChats() ([]Chat, error) {
 	}
 
 	return chats, nil
-}
-
-type Message struct {
-	ID        int
-	ChatID    int
-	Role      string
-	APIName   string
-	Content   string
-	CreatedAt time.Time
 }
 
 func GetChatMessages(chatID int) ([]Message, error) {

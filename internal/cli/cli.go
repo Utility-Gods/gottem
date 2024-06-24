@@ -210,27 +210,14 @@ func continuePreviousChat(app *api.App) {
 	}
 
 	selectedChat := chats[index]
-	displayChatHistory(selectedChat.ID)
-	continueChat(app, selectedChat.ID, nil)
-}
-
-func displayChatHistory(chatID int) {
-	messages, err := db.GetChatMessages(chatID)
+	messages, err := db.GetChatMessages(selectedChat.ID)
 	if err != nil {
 		fmt.Printf("Error retrieving messages: %v\n", err)
 		return
 	}
 
-	fmt.Printf("\n--- Chat History (ID: %d) ---\n", chatID)
-	for _, msg := range messages {
-		fmt.Printf("[%s] %s (%s): %s\n",
-			msg.CreatedAt.Format("2006-01-02 15:04:05"),
-			msg.Role,
-			msg.APIName,
-			msg.Content,
-		)
-	}
-	fmt.Println("----------------------------")
+	displayChatHistory(messages)
+	continueChat(app, selectedChat.ID, messages)
 }
 
 func continueChat(app *api.App, chatID int, previousMessages []db.Message) {
@@ -243,12 +230,26 @@ func continueChat(app *api.App, chatID int, previousMessages []db.Message) {
 		}
 	}
 
-	fmt.Println("\nContinue the conversation. Type 'exit' to end the chat.")
+	fmt.Println("\nContinue the conversation. Type 'exit' to end the chat, or 'edit' to edit the chat history.")
 
 	for {
 		input := getUserInput("> ")
+		input = strings.TrimSpace(input)
+
 		if strings.ToLower(input) == "exit" {
 			break
+		}
+
+		if strings.ToLower(input) == "edit" {
+			editedMessages, err := EditChatWithExternalEditor(previousMessages)
+			if err != nil {
+				fmt.Printf("Error editing chat: %v\n", err)
+			} else {
+				previousMessages = editedMessages
+				fmt.Println("Chat history updated.")
+				displayChatHistory(previousMessages)
+			}
+			continue
 		}
 
 		parts := strings.SplitN(input, " ", 2)
@@ -266,10 +267,22 @@ func continueChat(app *api.App, chatID int, previousMessages []db.Message) {
 
 		fmt.Println("Response:", response)
 
-		// Add the new messages to previousMessages
 		previousMessages = append(previousMessages,
 			db.Message{Role: "user", APIName: apiShortcut, Content: query},
 			db.Message{Role: "assistant", APIName: apiShortcut, Content: response},
 		)
 	}
+}
+
+func displayChatHistory(messages []db.Message) {
+	fmt.Println("\n--- Chat History ---")
+	for _, msg := range messages {
+		fmt.Printf("[%s] %s (%s): %s\n\n",
+			msg.CreatedAt.Format("2006-01-02 15:04:05"),
+			msg.Role,
+			msg.APIName,
+			msg.Content,
+		)
+	}
+	fmt.Println("--------------------")
 }
