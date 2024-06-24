@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 
+	"github.com/Utility-Gods/gottem/internal/db"
 	"github.com/Utility-Gods/gottem/pkg/types"
 )
 
@@ -19,12 +20,27 @@ func NewApp() *App {
 }
 
 // HandleQuery processes a query for a specific API
-func (a *App) HandleQuery(apiShortcut, query string) (string, error) {
+func (a *App) HandleQuery(apiShortcut, query string, chatID int) (string, error) {
 	api, exists := a.APIs[apiShortcut]
 	if !exists {
 		return "", fmt.Errorf("no API found for shortcut '%s'", apiShortcut)
 	}
-	return api.Handler.HandleQuery(query), nil
+
+	response := api.Handler.HandleQuery(query)
+
+	// Save the user message
+	err := db.AddMessage(chatID, "user", apiShortcut, query)
+	if err != nil {
+		return "", fmt.Errorf("failed to save user message: %w", err)
+	}
+
+	// Save the assistant message
+	err = db.AddMessage(chatID, "assistant", apiShortcut, response)
+	if err != nil {
+		return "", fmt.Errorf("failed to save assistant message: %w", err)
+	}
+
+	return response, nil
 }
 
 // GetAvailableAPIs returns a list of available APIs

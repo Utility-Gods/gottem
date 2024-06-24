@@ -4,30 +4,68 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Utility-Gods/gottem/internal/api"
+	"github.com/Utility-Gods/gottem/internal/db"
 )
 
-// RunCLI starts the CLI interface
 func RunCLI(app *api.App) {
-	fmt.Println("Welcome to the Multi-API CLI!")
+	for {
+		displayMainMenu()
+		choice := getUserInput("Enter your choice: ")
+
+		switch choice {
+		case "1":
+			startNewChat(app)
+		case "2":
+			viewPreviousChats()
+		case "3":
+			viewAPIKeys()
+		case "4":
+			return // Exit to main menu
+		default:
+			fmt.Println("Invalid choice. Please try again.")
+		}
+	}
+}
+
+func displayMainMenu() {
+	fmt.Println("\n--- Multi-API CLI Menu ---")
+	fmt.Println("1. Start a new chat")
+	fmt.Println("2. View previous chats")
+	fmt.Println("3. View API keys")
+	fmt.Println("4. Exit to main menu")
+}
+
+func getUserInput(prompt string) string {
+	fmt.Print(prompt)
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	return strings.TrimSpace(scanner.Text())
+}
+
+func startNewChat(app *api.App) {
+	fmt.Println("\n--- New Chat ---")
 	fmt.Println("Available APIs:")
 	for _, api := range app.GetAvailableAPIs() {
 		fmt.Printf("%s: %s\n", api.Shortcut, api.Name)
 	}
 	fmt.Println("Enter your query in the format: <API_SHORTCUT> <QUERY>")
-	fmt.Println("To go back to the main menu, type 'back'")
+	fmt.Println("To end the chat, type 'exit'")
 
-	scanner := bufio.NewScanner(os.Stdin)
+	chatTitle := getUserInput("Enter a title for this chat: ")
+	chatID, err := db.CreateChat(chatTitle)
+	if err != nil {
+		fmt.Printf("Error creating chat: %v\n", err)
+		return
+	}
+
 	for {
-		fmt.Print("> ")
-		scanner.Scan()
-		input := scanner.Text()
-
-		if strings.ToLower(input) == "back" {
-			fmt.Println("Returning to main menu...")
-			return
+		input := getUserInput("> ")
+		if strings.ToLower(input) == "exit" {
+			break
 		}
 
 		parts := strings.SplitN(input, " ", 2)
@@ -37,13 +75,78 @@ func RunCLI(app *api.App) {
 		}
 
 		apiShortcut, query := parts[0], parts[1]
-
-		response, err := app.HandleQuery(apiShortcut, query)
+		response, err := app.HandleQuery(apiShortcut, query, chatID)
 		if err != nil {
 			fmt.Println("Error:", err)
 			continue
 		}
 
-		fmt.Println(response)
+		fmt.Println("Response:", response)
 	}
+}
+
+func viewPreviousChats() {
+	fmt.Println("\n--- Previous Chats ---")
+	chats, err := db.GetChats()
+	if err != nil {
+		fmt.Printf("Error retrieving chats: %v\n", err)
+		return
+	}
+
+	if len(chats) == 0 {
+		fmt.Println("No previous chats found.")
+		return
+	}
+
+	for _, chat := range chats {
+		fmt.Printf("ID: %d, Title: %s, Created: %s\n", chat.ID, chat.Title, chat.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+
+	chatIDStr := getUserInput("Enter a chat ID to view messages (or press Enter to go back): ")
+	if chatIDStr == "" {
+		return
+	}
+
+	chatID, err := strconv.Atoi(chatIDStr)
+	if err != nil {
+		fmt.Println("Invalid chat ID.")
+		return
+	}
+
+	messages, err := db.GetChatMessages(chatID)
+	if err != nil {
+		fmt.Printf("Error retrieving messages: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n--- Messages for Chat ID %d ---\n", chatID)
+	for _, msg := range messages {
+		fmt.Printf("[%s] %s: %s\n", msg.CreatedAt.Format("2006-01-02 15:04:05"), msg.Role, msg.Content)
+	}
+}
+
+func viewAPIKeys() {
+	fmt.Println("\n--- API Keys ---")
+	apiKeys, err := db.GetAllAPIKeys()
+	if err != nil {
+		fmt.Printf("Error retrieving API keys: %v\n", err)
+		return
+	}
+
+	if len(apiKeys) == 0 {
+		fmt.Println("No API keys found.")
+		return
+	}
+
+	for _, key := range apiKeys {
+		maskedKey := maskAPIKey(key.APIKey)
+		fmt.Printf("API Name: %s\nAPI Key: %s\n\n", key.APIName, maskedKey)
+	}
+}
+
+func maskAPIKey(apiKey string) string {
+	if len(apiKey) <= 8 {
+		return strings.Repeat("*", len(apiKey))
+	}
+	return apiKey[:4] + strings.Repeat("*", len(apiKey)-8) + apiKey[len(apiKey)-4:]
 }
