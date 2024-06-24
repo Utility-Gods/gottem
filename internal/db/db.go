@@ -70,6 +70,7 @@ func SetAPIKey(apiName, apiKey string) error {
 }
 
 func GetAPIKey(apiName string) (string, error) {
+	log.Printf("Getting API key for %s", apiName)
 	var apiKey string
 	query := `SELECT api_key FROM api_keys WHERE api_name = ?;`
 	err := db.QueryRow(query, apiName).Scan(&apiKey)

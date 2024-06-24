@@ -17,6 +17,8 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	log.Print("Database initialized")
+
 	prompt := promptui.Select{
 		Label: "Select action",
 		Items: []string{"Run CLI", "Setup", "Exit"},
