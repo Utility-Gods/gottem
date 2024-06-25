@@ -62,14 +62,14 @@ func startNewChat(app *api.App) {
 		return
 	}
 
-	editor, err := NewEditor(app, chatID, nil)
+	editor, err := NewVimEditor(app, chatID, nil)
 	if err != nil {
-		fmt.Printf("Error creating editor: %v\n", err)
+		fmt.Printf("Error creating Vim editor: %v\n", err)
 		return
 	}
 
 	if err := editor.Run(); err != nil {
-		fmt.Printf("Error running editor: %v\n", err)
+		fmt.Printf("Error running Vim editor: %v\n", err)
 	}
 }
 
@@ -97,14 +97,14 @@ func continuePreviousChat(app *api.App) {
 		return
 	}
 
-	editor, err := NewEditor(app, selectedChat.ID, messages)
+	editor, err := NewVimEditor(app, selectedChat.ID, messages)
 	if err != nil {
-		fmt.Printf("Error creating editor: %v\n", err)
+		fmt.Printf("Error creating Vim editor: %v\n", err)
 		return
 	}
 
 	if err := editor.Run(); err != nil {
-		fmt.Printf("Error running editor: %v\n", err)
+		fmt.Printf("Error running Vim editor: %v\n", err)
 	}
 }
 
