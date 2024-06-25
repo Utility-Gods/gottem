@@ -28,3 +28,5 @@ gottem
 .idea/
 *.swp
 *.swo
+
+logs/

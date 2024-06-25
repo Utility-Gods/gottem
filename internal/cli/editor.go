@@ -28,15 +28,16 @@ type Editor struct {
 }
 
 func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error) {
-	logDir := filepath.Join(os.TempDir(), "gottem_logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create log directory: %w", err)
-	}
+
+	logDir := filepath.Join("" + "logs")
+
 	logFile, err := os.OpenFile(filepath.Join(logDir, fmt.Sprintf("editor_%d.log", time.Now().Unix())),
 		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
+
+	log.Printf("opened log file", logFile)
 
 	logger := log.New(logFile, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 
