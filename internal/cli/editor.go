@@ -137,9 +137,7 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	case tcell.KeyCtrlJ:
 		e.apiSelectMode = true
 		e.selectAPI()
-		// e.status = fmt.Sprintf("Selecting API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
-		// e.draw()
-		// return true
+
 	case tcell.KeyUp:
 		e.logger.Println("Cursor moved up")
 		e.moveCursor(0, -1)
