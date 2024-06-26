@@ -83,7 +83,7 @@ func (e *Editor) Run() error {
 	defer e.screen.Fini()
 	e.logger.Println("Editor running")
 
-	e.status = "Ctrl+E: Send query, Ctrl+A: Select API, Ctrl+Q: Quit and return to main menu"
+	e.status = "Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit and return to main menu"
 
 	for {
 		e.draw()
@@ -114,7 +114,7 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	case tcell.KeyCtrlE:
 		e.logger.Println("Send query command received")
 		e.sendQuery()
-	case tcell.KeyCtrlA:
+	case tcell.KeyCtrlJ:
 		e.logger.Println("Select API command received")
 		e.selectAPI()
 	case tcell.KeyUp:
@@ -272,7 +272,7 @@ func (e *Editor) sendQuery() {
 		db.Message{Role: "assistant", APIName: apiInfo.Name, Content: response, CreatedAt: time.Now()},
 	)
 
-	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+A to change API."
+	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+J to change API."
 	e.adjustScroll()
 	e.logger.Printf("Query sent and response received. Response length: %d", len(response))
 }
