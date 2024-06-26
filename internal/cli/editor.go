@@ -107,7 +107,6 @@ func (e *Editor) Run() error {
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	e.logger.Printf("Key event: key=%v rune=%v mod=%v", ev.Key(), ev.Rune(), ev.Modifiers())
-
 	if e.apiSelectMode {
 		switch ev.Key() {
 		case tcell.KeyLeft:
@@ -124,7 +123,7 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 			return false
 		}
 		e.draw()
-		return true
+		return false
 	}
 
 	switch ev.Key() {
@@ -137,9 +136,10 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 		e.sendQuery()
 	case tcell.KeyCtrlJ:
 		e.apiSelectMode = true
-		e.status = fmt.Sprintf("Selecting API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
-		e.draw()
-		return true
+		e.selectAPI()
+		// e.status = fmt.Sprintf("Selecting API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
+		// e.draw()
+		// return true
 	case tcell.KeyUp:
 		e.logger.Println("Cursor moved up")
 		e.moveCursor(0, -1)
@@ -358,10 +358,12 @@ func (e *Editor) selectAPI() {
 }
 
 func (e *Editor) cycleAPI(forward bool) {
+	e.logger.Println("cycleAPI called...")
 	if forward {
 		e.selectedAPI = (e.selectedAPI + 1) % len(e.apis)
 	} else {
 		e.selectedAPI = (e.selectedAPI - 1 + len(e.apis)) % len(e.apis)
 	}
 	e.status = fmt.Sprintf("Selected API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
+	return
 }
