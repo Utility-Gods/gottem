@@ -14,17 +14,18 @@ import (
 )
 
 type Editor struct {
-	screen      tcell.Screen
-	app         *api.App
-	chatID      int
-	messages    []db.Message
-	content     []string
-	cursor      struct{ x, y int }
-	scroll      int
-	status      string
-	apis        []types.APIInfo
-	selectedAPI int
-	logger      *log.Logger
+	screen        tcell.Screen
+	app           *api.App
+	chatID        int
+	messages      []db.Message
+	content       []string
+	cursor        struct{ x, y int }
+	scroll        int
+	status        string
+	apis          []types.APIInfo
+	selectedAPI   int
+	apiSelectMode bool
+	logger        *log.Logger
 }
 
 func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error) {
@@ -106,6 +107,26 @@ func (e *Editor) Run() error {
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	e.logger.Printf("Key event: key=%v rune=%v mod=%v", ev.Key(), ev.Rune(), ev.Modifiers())
+
+	if e.apiSelectMode {
+		switch ev.Key() {
+		case tcell.KeyLeft:
+			e.cycleAPI(false)
+		case tcell.KeyRight:
+			e.cycleAPI(true)
+		case tcell.KeyEnter:
+			e.apiSelectMode = false
+			e.status = fmt.Sprintf("API set to: %s", e.apis[e.selectedAPI].Name)
+		case tcell.KeyEscape:
+			e.apiSelectMode = false
+			e.status = "API selection cancelled"
+		default:
+			return false
+		}
+		e.draw()
+		return true
+	}
+
 	switch ev.Key() {
 	case tcell.KeyCtrlQ:
 		e.logger.Println("Quit command received")
@@ -115,8 +136,10 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 		e.logger.Println("Send query command received")
 		e.sendQuery()
 	case tcell.KeyCtrlJ:
-		e.logger.Println("Select API command received")
-		e.selectAPI()
+		e.apiSelectMode = true
+		e.status = fmt.Sprintf("Selecting API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
+		e.draw()
+		return true
 	case tcell.KeyUp:
 		e.logger.Println("Cursor moved up")
 		e.moveCursor(0, -1)
@@ -151,14 +174,14 @@ func (e *Editor) quitEditor() {
 }
 
 func (e *Editor) draw() {
-	e.logger.Println("Drawing screen")
 	e.screen.Clear()
 	width, height := e.screen.Size()
 
-	for y := 0; y < height-1; y++ {
+	// Draw content
+	for y := 0; y < height-2; y++ {
 		if y+e.scroll < len(e.content) {
 			line := e.content[y+e.scroll]
-			for x, ch := range line {
+			for x, ch := range []rune(line) {
 				if x < width {
 					e.screen.SetContent(x, y, ch, nil, tcell.StyleDefault)
 				}
@@ -166,18 +189,54 @@ func (e *Editor) draw() {
 		}
 	}
 
-	statusStyle := tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite)
-	statusRunes := []rune(e.status)
-	for x := 0; x < width; x++ {
-		if x < len(statusRunes) {
-			e.screen.SetContent(x, height-1, statusRunes[x], nil, statusStyle)
-		} else {
-			e.screen.SetContent(x, height-1, ' ', nil, statusStyle)
+	// Draw cursor
+	cursorY := e.cursor.y - e.scroll
+	if cursorY >= 0 && cursorY < height-2 {
+		e.screen.ShowCursor(e.cursor.x, cursorY)
+	} else {
+		e.screen.HideCursor()
+	}
+
+	// Draw API selection status if in API select mode
+	if e.apiSelectMode {
+		apiStatus := fmt.Sprintf("< %s >", e.apis[e.selectedAPI].Name)
+		startX := (width - len(apiStatus)) / 2
+		for i, ch := range apiStatus {
+			e.screen.SetContent(startX+i, height-2, ch, nil, tcell.StyleDefault.Reverse(true))
 		}
 	}
 
-	e.screen.ShowCursor(e.cursor.x, e.cursor.y-e.scroll)
-	e.logger.Printf("Screen drawn. Cursor at (%d, %d), scroll at %d", e.cursor.x, e.cursor.y, e.scroll)
+	// Draw status bar
+	statusBarY := height - 1
+	statusStyle := tcell.StyleDefault.Background(tcell.ColorNavy).Foreground(tcell.ColorWhite)
+
+	// Show current API
+	currentAPI := fmt.Sprintf("API: %s", e.apis[e.selectedAPI].Name)
+	drawText(e.screen, 0, statusBarY, width/3, currentAPI, statusStyle)
+
+	// Show cursor position
+	cursorPos := fmt.Sprintf("Ln %d, Col %d", e.cursor.y+1, e.cursor.x+1)
+	drawText(e.screen, width/3, statusBarY, width/3, cursorPos, statusStyle)
+
+	// Show status message
+	drawText(e.screen, 2*width/3, statusBarY, width/3, e.status, statusStyle)
+
+	e.screen.Show()
+}
+
+// Helper function to draw text with proper truncation
+func drawText(screen tcell.Screen, x, y, maxWidth int, text string, style tcell.Style) {
+	width := 0
+	for _, ch := range text {
+		if width >= maxWidth {
+			break
+		}
+		screen.SetContent(x+width, y, ch, nil, style)
+		width++
+	}
+	for ; width < maxWidth; width++ {
+		screen.SetContent(x+width, y, ' ', nil, style)
+	}
 }
 
 func (e *Editor) moveCursor(dx, dy int) {
@@ -296,4 +355,13 @@ func (e *Editor) selectAPI() {
 			e.logger.Println("API selection cancelled")
 		}
 	}
+}
+
+func (e *Editor) cycleAPI(forward bool) {
+	if forward {
+		e.selectedAPI = (e.selectedAPI + 1) % len(e.apis)
+	} else {
+		e.selectedAPI = (e.selectedAPI - 1 + len(e.apis)) % len(e.apis)
+	}
+	e.status = fmt.Sprintf("Selected API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
 }
