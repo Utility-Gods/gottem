@@ -12,7 +12,7 @@ func SettingsMenu() {
 	for {
 		prompt := promptui.Select{
 			Label: "Settings Menu",
-			Items: []string{"API Keys", "View API Keys", "Delete API Key", "Flush DB", "Back to Main Menu"},
+			Items: []string{"API Keys", "View API Keys", "Delete API Key", "Flush DB", "Run Migration", "Back to Main Menu"},
 		}
 
 		_, result, err := prompt.Run()
@@ -30,6 +30,8 @@ func SettingsMenu() {
 			DeleteAPIKey()
 		case "Flush DB":
 			FlushDB()
+		case "Run Migration":
+			RunMigration()
 		case "Back to Main Menu":
 			return
 		}
@@ -194,5 +196,15 @@ func FlushDB() {
 		return
 	}
 	fmt.Println("Database flushed successfully.")
+	return
+}
+
+func RunMigration() {
+	err := db.MigrateDatabase()
+	if err != nil {
+		fmt.Printf("Failed to run database migration: %v\n", err)
+		return
+	}
+	fmt.Println("Database migration successful.")
 	return
 }

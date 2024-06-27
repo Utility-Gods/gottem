@@ -1,8 +1,6 @@
 package api
 
 import (
-	"log"
-
 	"github.com/Utility-Gods/gottem/pkg/types"
 )
 
@@ -12,7 +10,7 @@ func GetAPIHandlers() map[string]types.APIInfo {
 
 	claudeAPI, err := NewClaudeAPI()
 	if err != nil {
-		log.Printf("Failed to initialize Claude API: %v", err)
+		// log.Printf("Failed to initialize Claude API: %v", err)
 		handlers["c"] = types.APIInfo{Name: "Claude API (Not Configured)", Shortcut: "c", Handler: &ErrorAPI{Err: err}}
 	} else {
 		handlers["c"] = types.APIInfo{Name: "Claude API", Shortcut: "c", Handler: claudeAPI}
@@ -20,7 +18,7 @@ func GetAPIHandlers() map[string]types.APIInfo {
 
 	openAIAPI, err := NewOpenAIAPI()
 	if err != nil {
-		log.Printf("Failed to initialize OpenAI API: %v", err)
+		// log.Printf("Failed to initialize OpenAI API: %v", err)
 		handlers["o"] = types.APIInfo{Name: "OpenAI API (Not Configured)", Shortcut: "o", Handler: &ErrorAPI{Err: err}}
 	} else {
 		handlers["o"] = types.APIInfo{Name: "OpenAI API", Shortcut: "o", Handler: openAIAPI}
@@ -28,7 +26,7 @@ func GetAPIHandlers() map[string]types.APIInfo {
 
 	groqAPI, err := NewGroqAPI()
 	if err != nil {
-		log.Printf("Failed to initialize Groq API: %v", err)
+		// log.Printf("Failed to initialize Groq API: %v", err)
 		handlers["g"] = types.APIInfo{Name: "Groq API (Not Configured)", Shortcut: "g", Handler: &ErrorAPI{Err: err}}
 	} else {
 		handlers["g"] = types.APIInfo{Name: "Groq API", Shortcut: "g", Handler: groqAPI}

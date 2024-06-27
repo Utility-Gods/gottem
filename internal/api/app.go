@@ -19,30 +19,15 @@ func NewApp() *App {
 }
 
 // HandleQuery processes a query for a specific API
-func (a *App) HandleQuery(apiShortcut, query string, chatID int, previousMessages []db.Message) (string, error) {
+func (a *App) HandleQuery(apiShortcut, query string, chatID int, context string) (string, error) {
 	api, exists := a.APIs[apiShortcut]
 	if !exists {
 		return "", fmt.Errorf("no API found for shortcut '%s'", apiShortcut)
 	}
 
-	// Prepare context from previous messages
-	context := prepareContext(previousMessages)
-
-	// Call the API with context
+	// Prepare full query with context
 	fullQuery := context + "\n\nHuman: " + query + "\n\nAssistant:"
 	response := api.Handler.HandleQuery(fullQuery)
-
-	// Save the user message
-	err := db.AddMessage(chatID, "user", apiShortcut, query)
-	if err != nil {
-		return "", fmt.Errorf("failed to save user message: %w", err)
-	}
-
-	// Save the assistant message
-	err = db.AddMessage(chatID, "assistant", apiShortcut, response)
-	if err != nil {
-		return "", fmt.Errorf("failed to save assistant message: %w", err)
-	}
 
 	return response, nil
 }

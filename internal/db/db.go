@@ -25,6 +25,7 @@ type Message struct {
 type Chat struct {
 	ID        int
 	Title     string
+	Context   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -189,6 +190,36 @@ func DeleteAPIKey(apiName string) error {
 	return nil
 }
 
+func GetChat(chatID int) (Chat, error) {
+	query := `SELECT id, title, context, created_at, updated_at FROM chats WHERE id = ?;`
+	var chat Chat
+	var nullableContext sql.NullString
+
+	err := db.QueryRow(query, chatID).Scan(
+		&chat.ID,
+		&chat.Title,
+		&nullableContext,
+		&chat.CreatedAt,
+		&chat.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Chat{}, fmt.Errorf("no chat found with ID %d", chatID)
+		}
+		log.Printf("Error retrieving chat with ID %d: %v", chatID, err)
+		return Chat{}, fmt.Errorf("failed to retrieve chat: %w", err)
+	}
+
+	if nullableContext.Valid {
+		chat.Context = nullableContext.String
+	} else {
+		chat.Context = "" // or any default value you prefer
+	}
+
+	return chat, nil
+}
+
 func CreateChat(title string) (int, error) {
 	query := `INSERT INTO chats (title) VALUES (?);`
 	result, err := db.Exec(query, title)
@@ -293,6 +324,18 @@ func CloseDB() {
 	}
 }
 
+// UpdateChatContext updates the context of a specific chat
+func UpdateChatContext(chatID int, context string) error {
+	query := `UPDATE chats SET context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
+	_, err := db.Exec(query, context, chatID)
+	if err != nil {
+		log.Printf("Error updating chat context for chat ID %d: %v", chatID, err)
+		return fmt.Errorf("failed to update chat context: %w", err)
+	}
+	log.Printf("Chat context updated successfully for chat ID %d", chatID)
+	return nil
+}
+
 func FlushDB() error {
 	// Start a transaction to ensure all operations are atomic
 	tx, err := db.Begin()
@@ -339,5 +382,66 @@ func FlushDB() error {
 	}
 
 	log.Println("Database flushed successfully")
+	return nil
+}
+
+func MigrateDatabase() error {
+	// Check if the context column exists in the chats table
+	var contextExists bool
+	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chats') WHERE name='context'").Scan(&contextExists)
+	if err != nil {
+		return fmt.Errorf("error checking for context column: %w", err)
+	}
+
+	if !contextExists {
+		log.Println("Context column does not exist. Starting migration...")
+
+		// Start a transaction for the migration process
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("error starting transaction: %w", err)
+		}
+		defer tx.Rollback() // Rollback the transaction if it's not committed
+
+		// Add the context column
+		_, err = tx.Exec("ALTER TABLE chats ADD COLUMN context TEXT")
+		if err != nil {
+			return fmt.Errorf("error adding context column: %w", err)
+		}
+		log.Println("Added context column to chats table")
+
+		// Populate the context column with existing messages
+		_, err = tx.Exec(`
+			UPDATE chats
+			SET context = COALESCE(
+				(SELECT GROUP_CONCAT(
+					CASE
+						WHEN messages.role = 'user' THEN 'Human: ' || messages.content
+						ELSE 'Assistant: ' || messages.content
+					END,
+					char(10) || char(10)
+				)
+				FROM messages
+				WHERE messages.chat_id = chats.id
+				ORDER BY messages.created_at),
+				''
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("error populating context column: %w", err)
+		}
+		log.Println("Populated context column with existing messages")
+
+		// Commit the transaction
+		err = tx.Commit()
+		if err != nil {
+			return fmt.Errorf("error committing migration transaction: %w", err)
+		}
+
+		log.Println("Database migration completed successfully")
+	} else {
+		log.Println("Context column already exists. No migration needed.")
+	}
+
 	return nil
 }
