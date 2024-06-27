@@ -500,8 +500,11 @@ func (e *Editor) sendQuery() {
 
 	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chatID, e.messages)
 	if err != nil {
-		e.status = fmt.Sprintf("Error: %v", err)
+		// Handle the error by displaying it in the status bar and logging it
+		errorMsg := fmt.Sprintf("Error from API: %v", err)
+		e.status = errorMsg
 		e.logger.Printf("Error sending query: %v", err)
+		e.draw()
 		return
 	}
 
@@ -515,7 +518,7 @@ func (e *Editor) sendQuery() {
 	// Append the response to the content
 	e.appendText(formattedResponse)
 
-	// Update messages
+	// Update messages (only if the query was successful)
 	e.messages = append(e.messages,
 		db.Message{Role: "user", APIName: apiInfo.Name, Content: query, CreatedAt: time.Now()},
 		db.Message{Role: "assistant", APIName: apiInfo.Name, Content: response, CreatedAt: time.Now()},
@@ -529,7 +532,10 @@ func (e *Editor) sendQuery() {
 }
 
 func (e *Editor) getCurrentLine() string {
-	return e.content[e.cursor.y]
+	if e.cursor.y < len(e.content) {
+		return e.content[e.cursor.y]
+	}
+	return ""
 }
 
 func (e *Editor) appendText(text string) {

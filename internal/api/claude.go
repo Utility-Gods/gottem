@@ -64,13 +64,13 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 		"messages":   messages,
 	})
 	if err != nil {
-		log.Printf("Error creating request body: %v", err)
+		// log.Printf("Error creating request body: %v", err)
 		return fmt.Sprintf("Error creating request body: %v", err)
 	}
 
 	req, err := http.NewRequest("POST", claudeAPIURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
+		// log.Printf("Error creating request: %v", err)
 		return fmt.Sprintf("Error creating request: %v", err)
 	}
 
@@ -80,43 +80,43 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Printf("Error making request to Claude API: %v", err)
+		// log.Printf("Error making request to Claude API: %v", err)
 		return fmt.Sprintf("Error making request to Claude API: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading response body: %v", err)
+		// log.Printf("Error reading response body: %v", err)
 		return fmt.Sprintf("Error reading response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error from Claude API: %s", body)
+		// log.Printf("Error from Claude API: %s", body)
 		return fmt.Sprintf("Error from Claude API: %s", body)
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("Error parsing response: %v", err)
+		// log.Printf("Error parsing response: %v", err)
 		return fmt.Sprintf("Error parsing response: %v", err)
 	}
 
 	content, ok := result["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		log.Println("Unexpected response format from Claude API")
+		// log.Println("Unexpected response format from Claude API")
 		return "Unexpected response format from Claude API"
 	}
 
 	firstContent, ok := content[0].(map[string]interface{})
 	if !ok {
-		log.Println("Unexpected content format from Claude API")
+		// log.Println("Unexpected content format from Claude API")
 		return "Unexpected content format from Claude API"
 	}
 
 	text, ok := firstContent["text"].(string)
 	if !ok {
-		log.Println("Unable to extract text from Claude API response")
+		// log.Println("Unable to extract text from Claude API response")
 		return "Unable to extract text from Claude API response"
 	}
 

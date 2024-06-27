@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
@@ -41,7 +40,7 @@ func NewGroqAPI() (*GroqAPI, error) {
 
 func (c *GroqAPI) HandleQuery(query string) string {
 	if c.client == nil {
-		log.Println("HTTP client is nil")
+		// log.Println("HTTP client is nil")
 		return "Error: HTTP client not initialized"
 	}
 
@@ -63,13 +62,13 @@ func (c *GroqAPI) HandleQuery(query string) string {
 		"messages":   messages,
 	})
 	if err != nil {
-		log.Printf("Error creating request body: %v", err)
+		// log.Printf("Error creating request body: %v", err)
 		return fmt.Sprintf("Error creating request body: %v", err)
 	}
 
 	req, err := http.NewRequest("POST", groqAPIURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
+		// log.Printf("Error creating request: %v", err)
 		return fmt.Sprintf("Error creating request: %v", err)
 	}
 
@@ -78,43 +77,43 @@ func (c *GroqAPI) HandleQuery(query string) string {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Printf("Error making request to Groq API: %v", err)
+		// log.Printf("Error making request to Groq API: %v", err)
 		return fmt.Sprintf("Error making request to Groq API: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading response body: %v", err)
+		// log.Printf("Error reading response body: %v", err)
 		return fmt.Sprintf("Error reading response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error from Groq API: %s", body)
+		// log.Printf("Error from Groq API: %s", body)
 		return fmt.Sprintf("Error from Groq API: %s", body)
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("Error parsing response: %v", err)
+		// log.Printf("Error parsing response: %v", err)
 		return fmt.Sprintf("Error parsing response: %v", err)
 	}
 
 	content, ok := result["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		log.Println("Unexpected response format from Groq API")
+		// log.Println("Unexpected response format from Groq API")
 		return "Unexpected response format from Groq API"
 	}
 
 	firstContent, ok := content[0].(map[string]interface{})
 	if !ok {
-		log.Println("Unexpected content format from Groq API")
+		// log.Println("Unexpected content format from Groq API")
 		return "Unexpected content format from Groq API"
 	}
 
 	text, ok := firstContent["text"].(string)
 	if !ok {
-		log.Println("Unable to extract text from Groq API response")
+		// log.Println("Unable to extract text from Groq API response")
 		return "Unable to extract text from Groq API response"
 	}
 
