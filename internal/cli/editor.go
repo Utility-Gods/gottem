@@ -171,10 +171,8 @@ func (e *Editor) loadMessagesFromDB() error {
 
 func (e *Editor) Run() error {
 	defer func() {
-		if e.isDirty {
-			if err := e.saveMessagesToDB(); err != nil {
-				e.logger.Printf("Error saving messages to DB: %v", err)
-			}
+		if err := e.saveMessagesToDB(); err != nil {
+			e.logger.Printf("Error saving messages to DB: %v", err)
 		}
 		e.screen.Fini()
 	}()
@@ -850,7 +848,33 @@ func (e *Editor) isSelected(x, y int) bool {
 
 func (e *Editor) quitEditor() {
 	e.logger.Println("Quitting editor")
-	e.draw()
-	e.screen.Show()
+
+	// Save messages to DB
+	if err := e.saveMessagesToDB(); err != nil {
+		e.logger.Printf("Error saving messages to DB: %v", err)
+		e.status = fmt.Sprintf("Error saving chat: %v", err)
+		e.draw()
+		e.screen.Show()
+		time.Sleep(2 * time.Second) // Give user time to see the error message
+	}
+
+	// Update the chat's last modified time
+	// if err := db.UpdateChatLastModified(e.chatID); err != nil {
+	// 	e.logger.Printf("Error updating chat last modified time: %v", err)
+	// }
+
+	e.screen.Clear()
+	e.screen.Sync()
 	e.screen.Fini()
 }
+
+// // Add this function to db.go
+// func UpdateChatLastModified(chatID int) error {
+// 	query := `UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
+// 	_, err := db.Exec(query, chatID)
+// 	if err != nil {
+// 		log.Printf("Error updating last modified time for chat ID %d: %v", chatID, err)
+// 		return fmt.Errorf("failed to update last modified time for chat ID %d: %w", chatID, err)
+// 	}
+// 	return nil
+// }

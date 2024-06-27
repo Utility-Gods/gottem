@@ -26,7 +26,7 @@ Gottem is a command-line interface (CLI) application that allows users to intera
 
 4. Build the application:
    ```
-   go build
+   go build -o gottem ./cmd/cli
    ```
 
 ## Usage

@@ -332,7 +332,7 @@ func UpdateChatContext(chatID int, context string) error {
 		log.Printf("Error updating chat context for chat ID %d: %v", chatID, err)
 		return fmt.Errorf("failed to update chat context: %w", err)
 	}
-	log.Printf("Chat context updated successfully for chat ID %d", chatID)
+	// log.Printf("Chat context updated successfully for chat ID %d", chatID)
 	return nil
 }
 
