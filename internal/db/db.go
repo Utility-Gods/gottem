@@ -11,6 +11,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+var db *sql.DB
+
 type Message struct {
 	ID        int
 	ChatID    int
@@ -20,7 +22,12 @@ type Message struct {
 	CreatedAt time.Time
 }
 
-var db *sql.DB
+type Chat struct {
+	ID        int
+	Title     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
 
 func InitDB() error {
 	homeDir, err := os.UserHomeDir()
@@ -171,6 +178,17 @@ func GetAllAPIKeys() ([]struct {
 	return apiKeys, nil
 }
 
+func DeleteAPIKey(apiName string) error {
+	query := `DELETE FROM api_keys WHERE api_name = ?;`
+	_, err := db.Exec(query, apiName)
+	if err != nil {
+		log.Printf("Error deleting API key for %s: %v", apiName, err)
+		return err
+	}
+	log.Printf("API key for %s deleted successfully", apiName)
+	return nil
+}
+
 func CreateChat(title string) (int, error) {
 	query := `INSERT INTO chats (title) VALUES (?);`
 	result, err := db.Exec(query, title)
@@ -194,13 +212,6 @@ func AddMessage(chatID int, role, apiName, content string) error {
 		return err
 	}
 	return nil
-}
-
-type Chat struct {
-	ID        int
-	Title     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 func GetChats() ([]Chat, error) {
@@ -252,6 +263,26 @@ func GetChatMessages(chatID int) ([]Message, error) {
 	return messages, nil
 }
 
+func UpdateChatTitle(chatID int, newTitle string) error {
+	query := `UPDATE chats SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
+	_, err := db.Exec(query, newTitle, chatID)
+	if err != nil {
+		log.Printf("Error updating chat title: %v", err)
+		return err
+	}
+	return nil
+}
+
+func DeleteChat(chatID int) error {
+	query := `DELETE FROM chats WHERE id = ?;`
+	_, err := db.Exec(query, chatID)
+	if err != nil {
+		log.Printf("Error deleting chat: %v", err)
+		return err
+	}
+	return nil
+}
+
 func CloseDB() {
 	if db != nil {
 		if err := db.Close(); err != nil {
@@ -260,17 +291,6 @@ func CloseDB() {
 			log.Println("Database closed successfully")
 		}
 	}
-}
-
-func DeleteAPIKey(apiName string) error {
-	query := `DELETE FROM api_keys WHERE api_name = ?;`
-	_, err := db.Exec(query, apiName)
-	if err != nil {
-		log.Printf("Error deleting API key for %s: %v", apiName, err)
-		return err
-	}
-	log.Printf("API key for %s deleted successfully", apiName)
-	return nil
 }
 
 func FlushDB() error {

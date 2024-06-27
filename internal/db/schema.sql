@@ -4,15 +4,16 @@ CREATE TABLE IF NOT EXISTS api_keys (
     api_key TEXT NOT NULL
 );
 
--- Chats table
+-- Chats table (updated with context field)
 CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
+    context TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Messages ta
+-- Messages table (kept for backward compatibility)
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id INTEGER NOT NULL,
@@ -23,14 +24,24 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (chat_id) REFERENCES chats (id) ON DELETE CASCADE
 );
 
--- Trigger to update chat timestamp
+-- Trigger to update chat timestamp (updated to work with both messages and context updates)
 CREATE TRIGGER IF NOT EXISTS update_chat_timestamp
 AFTER INSERT ON messages
 BEGIN
     UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.chat_id;
 END;
 
+-- Additional trigger for context updates
+CREATE TRIGGER IF NOT EXISTS update_chat_timestamp_on_context_change
+AFTER UPDATE OF context ON chats
+BEGIN
+    UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
 -- Schema version table
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
+
+-- Insert or update the schema version
+INSERT OR REPLACE INTO schema_version (version) VALUES (2);
