@@ -30,12 +30,24 @@ const (
 	StatusBarHeight = 5
 )
 
+// Define colors
+const (
+	ColorDefault = tcell.ColorDefault
+	ColorWhite   = tcell.ColorWhite
+	ColorGreen   = tcell.ColorGreen
+)
+
 type Cursor struct {
 	x, y int
 }
 
 type Selection struct {
 	start, end Cursor
+}
+
+type ColoredLine struct {
+	Text  string
+	Color tcell.Color
 }
 
 type Editor struct {
@@ -54,8 +66,8 @@ type Editor struct {
 	chatTitle      string
 	lastKey        rune
 	chat           db.Chat
-	content        []string
-	wrappedContent [][]rune
+	content        []ColoredLine
+	wrappedContent []ColoredLine
 }
 
 const (
@@ -105,7 +117,7 @@ func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 		app:         app,
 		chatID:      chatID,
 		isDirty:     false,
-		content:     strings.Split(chat.Context, "\n"),
+		content:     splitChatContext(chat.Context),
 		cursor:      Cursor{x: 0, y: 0},
 		apis:        app.GetAvailableAPIs(),
 		selectedAPI: 0,
@@ -123,7 +135,7 @@ func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 
 	// If there's no content, add an empty line to start with
 	if len(e.content) == 0 {
-		e.content = append(e.content, "")
+		e.content = append(e.content, ColoredLine{"", ColorDefault})
 	}
 
 	e.logger.Println("Editor initialized")
@@ -163,29 +175,38 @@ func cleanupOldLogs(logDir string) error {
 	return nil
 }
 
+func splitChatContext(context string) []ColoredLine {
+	lines := strings.Split(context, "\n")
+	coloredLines := make([]ColoredLine, len(lines))
+	for i, line := range lines {
+		coloredLines[i] = ColoredLine{Text: line, Color: ColorDefault}
+	}
+	return coloredLines
+}
+
 func (e *Editor) wrapContent() {
-	e.wrappedContent = make([][]rune, 0)
+	e.wrappedContent = make([]ColoredLine, 0)
 	for _, line := range e.content {
-		if len(line) == 0 {
-			e.wrappedContent = append(e.wrappedContent, []rune{})
+		if len(line.Text) == 0 {
+			e.wrappedContent = append(e.wrappedContent, ColoredLine{"", line.Color})
 			continue
 		}
 
-		var wrappedLine []rune
+		var wrappedLine string
 		lineWidth := 0
-		for _, ch := range []rune(line) {
+		for _, ch := range []rune(line.Text) {
 			chWidth := runewidth.RuneWidth(ch)
 			if lineWidth+chWidth > EditorWidth-1 {
-				e.wrappedContent = append(e.wrappedContent, wrappedLine)
-				wrappedLine = []rune{ch}
+				e.wrappedContent = append(e.wrappedContent, ColoredLine{wrappedLine, line.Color})
+				wrappedLine = string(ch)
 				lineWidth = chWidth
 			} else {
-				wrappedLine = append(wrappedLine, ch)
+				wrappedLine += string(ch)
 				lineWidth += chWidth
 			}
 		}
 		if len(wrappedLine) > 0 {
-			e.wrappedContent = append(e.wrappedContent, wrappedLine)
+			e.wrappedContent = append(e.wrappedContent, ColoredLine{wrappedLine, line.Color})
 		}
 	}
 }
@@ -215,7 +236,11 @@ func (e *Editor) setDefaultAPI() error {
 }
 
 func (e *Editor) saveContext() error {
-	context := strings.Join(e.content, "\n")
+	context := ""
+	for _, line := range e.content {
+		context += line.Text + "\n"
+	}
+	context = strings.TrimSuffix(context, "\n")
 	return db.UpdateChatContext(e.chat.ID, context)
 }
 
@@ -451,7 +476,7 @@ func (e *Editor) draw() {
 		if y+e.scroll < len(e.content) {
 			line := e.content[y+e.scroll]
 			x := startX
-			for _, ch := range []rune(line) {
+			for _, ch := range []rune(line.Text) {
 				if x-startX < EditorWidth-1 { // Leave space for the border
 					style := tcell.StyleDefault
 					if e.isSelected(x-startX, y+e.scroll) {
@@ -600,12 +625,12 @@ func (e *Editor) moveSelection(dx, dy int) {
 	newX, newY := e.selection.end.x+dx, e.selection.end.y+dy
 	if newY >= 0 && newY < len(e.content) {
 		e.selection.end.y = newY
-		if newX >= 0 && newX <= len(e.content[newY]) {
+		if newX >= 0 && newX <= len(e.content[newY].Text) {
 			e.selection.end.x = newX
 		} else if newX < 0 {
 			e.selection.end.x = 0
 		} else {
-			e.selection.end.x = len(e.content[newY])
+			e.selection.end.x = len(e.content[newY].Text)
 		}
 	}
 	e.cursor = e.selection.end
@@ -615,66 +640,89 @@ func (e *Editor) moveSelection(dx, dy int) {
 
 func (e *Editor) insertNewLine() {
 	e.logger.Printf("Inserting new line at (%d, %d)", e.cursor.x, e.cursor.y)
+
 	if e.cursor.y >= len(e.content) {
-		e.content = append(e.content, "")
+		e.content = append(e.content, ColoredLine{"", ColorDefault})
 		e.cursor.y = len(e.content) - 1
 		e.cursor.x = 0
 		return
 	}
 
-	line := e.content[e.cursor.y]
-	e.content = append(e.content[:e.cursor.y+1], e.content[e.cursor.y:]...)
-	e.content[e.cursor.y] = line[:e.cursor.x]
-	e.content[e.cursor.y+1] = line[e.cursor.x:]
+	currentLine := &e.content[e.cursor.y]
+	newLine := ColoredLine{
+		Text:  currentLine.Text[e.cursor.x:],
+		Color: currentLine.Color,
+	}
+	currentLine.Text = currentLine.Text[:e.cursor.x]
+
+	// Insert the new line after the current line
+	e.content = append(e.content[:e.cursor.y+1], append([]ColoredLine{newLine}, e.content[e.cursor.y+1:]...)...)
 	e.cursor.y++
 	e.cursor.x = 0
 	e.isDirty = true
+
+	e.wrapContent()
+
 	e.logger.Printf("New line inserted, cursor now at (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
 func (e *Editor) backspace() {
 	e.logger.Printf("Backspace at (%d, %d)", e.cursor.x, e.cursor.y)
+
 	if e.cursor.x > 0 {
-		line := e.content[e.cursor.y]
-		e.content[e.cursor.y] = line[:e.cursor.x-1] + line[e.cursor.x:]
+		line := &e.content[e.cursor.y]
+		line.Text = line.Text[:e.cursor.x-1] + line.Text[e.cursor.x:]
 		e.cursor.x--
 	} else if e.cursor.y > 0 {
-		prevLine := e.content[e.cursor.y-1]
-		e.cursor.x = len(prevLine)
-		e.content[e.cursor.y-1] += e.content[e.cursor.y]
-		if e.cursor.y < len(e.content)-1 {
-			e.content = append(e.content[:e.cursor.y], e.content[e.cursor.y+1:]...)
-		} else {
-			e.content = e.content[:e.cursor.y]
-		}
+		// Merge with the previous line
+		prevLine := &e.content[e.cursor.y-1]
+		currentLine := e.content[e.cursor.y]
+
+		e.cursor.x = len(prevLine.Text)
+		prevLine.Text += currentLine.Text
+
+		// Remove the current line
+		e.content = append(e.content[:e.cursor.y], e.content[e.cursor.y+1:]...)
 		e.cursor.y--
 	}
 	e.isDirty = true
+	e.wrapContent()
+
 	e.logger.Printf("After backspace, cursor at (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
 func (e *Editor) insertChar(ch rune) {
 	if e.cursor.y >= len(e.content) {
 		// If the cursor is beyond the last line, add a new line
-		e.content = append(e.content, "")
+		e.content = append(e.content, ColoredLine{"", ColorDefault})
 	}
 
-	line := e.content[e.cursor.y]
-	if e.cursor.x > len(line) {
+	line := &e.content[e.cursor.y]
+	if e.cursor.x > len(line.Text) {
 		// If the cursor is beyond the end of the line, move it to the end
-		e.cursor.x = len(line)
+		e.cursor.x = len(line.Text)
 	}
 
-	e.content[e.cursor.y] = line[:e.cursor.x] + string(ch) + line[e.cursor.x:]
+	// Insert the character
+	line.Text = line.Text[:e.cursor.x] + string(ch) + line.Text[e.cursor.x:]
 	e.cursor.x++
 	e.isDirty = true
 
 	// Check if we need to wrap
-	if runewidth.StringWidth(e.content[e.cursor.y][:e.cursor.x]) >= EditorWidth-1 {
-		e.insertNewLine()
+	if runewidth.StringWidth(line.Text[:e.cursor.x]) >= EditorWidth-1 {
+		// Split the line
+		nextLineText := line.Text[e.cursor.x:]
+		line.Text = line.Text[:e.cursor.x]
+
+		// Insert a new line with the same color
+		newLine := ColoredLine{nextLineText, line.Color}
+		e.content = append(e.content[:e.cursor.y+1], append([]ColoredLine{newLine}, e.content[e.cursor.y+1:]...)...)
+
 		e.cursor.y++
 		e.cursor.x = 0
 	}
+
+	e.wrapContent()
 }
 
 func (e *Editor) sendQuery() {
@@ -686,7 +734,13 @@ func (e *Editor) sendQuery() {
 	e.draw()
 	e.screen.Show()
 
-	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chat.ID, strings.Join(e.content, "\n"))
+	content := ""
+	for _, line := range e.content {
+		content += line.Text
+	}
+	content += "\n"
+
+	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chat.ID, content)
 	if err != nil {
 		e.status = fmt.Sprintf("Error: %v", err)
 		e.logger.Printf("Error sending query: %v", err)
@@ -694,7 +748,7 @@ func (e *Editor) sendQuery() {
 	}
 
 	// Append the query and response to the content
-	e.appendText(fmt.Sprintf("Assistant: %s\n", response))
+	e.appendText(fmt.Sprintf("Assistant: %s\n", response), tcell.ColorWhite)
 
 	e.isDirty = true
 	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+J to change API."
@@ -714,46 +768,48 @@ func (e *Editor) getSelectedText() string {
 	}
 
 	if start.y == end.y {
-		return e.content[start.y][start.x:end.x]
+		return e.content[start.y].Text[start.x:end.x]
 	}
 
-	text := e.content[start.y][start.x:]
+	text := e.content[start.y].Text[start.x:]
 	for y := start.y + 1; y < end.y; y++ {
-		text += "\n" + e.content[y]
+		text += "\n" + e.content[y].Text
 	}
-	text += "\n" + e.content[end.y][:end.x]
+	text += "\n" + e.content[end.y].Text[:end.x]
 
 	return text
 }
 
 func (e *Editor) getLastParagraph() string {
 	for i := len(e.content) - 1; i >= 0; i-- {
-		if strings.TrimSpace(e.content[i]) != "" {
-			return strings.TrimSpace(e.content[i])
+		if strings.TrimSpace(e.content[i].Text) != "" {
+			return strings.TrimSpace(e.content[i].Text)
 		}
 	}
 	return ""
 }
 
-func (e *Editor) appendText(text string) {
+func (e *Editor) appendText(text string, color tcell.Color) {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if i > 0 || len(e.content) == 0 {
-			e.content = append(e.content, "")
+			e.content = append(e.content, ColoredLine{"", color})
 			e.cursor.y++
 			e.cursor.x = 0
 		}
-
-		for _, ch := range line {
-			e.insertChar(ch)
-		}
+		currentLine := &e.content[len(e.content)-1]
+		currentLine.Text += line
+		currentLine.Color = color
+		e.cursor.x = len(currentLine.Text)
 	}
+	e.isDirty = true
 	e.adjustScroll()
+	e.wrapContent()
 }
 
 func (e *Editor) getCurrentLine() string {
 	if e.cursor.y < len(e.content) {
-		return e.content[e.cursor.y]
+		return e.content[e.cursor.y].Text
 	}
 	return ""
 }
@@ -764,7 +820,7 @@ func (e *Editor) adjustScroll() {
 
 	cursorY := 0
 	for i := 0; i < e.cursor.y; i++ {
-		cursorY += (len(e.content[i]) + EditorWidth - 2) / (EditorWidth - 1)
+		cursorY += (len(e.content[i].Text) + EditorWidth - 2) / (EditorWidth - 1)
 	}
 	cursorY += e.cursor.x / (EditorWidth - 1)
 
@@ -781,11 +837,11 @@ func (e *Editor) insertText(text string) {
 		if i == 0 {
 			// Insert the first line at the current cursor position
 			currentLine := e.content[e.cursor.y]
-			e.content[e.cursor.y] = currentLine[:e.cursor.x] + line + currentLine[e.cursor.x:]
+			e.content[e.cursor.y].Text = currentLine.Text[:e.cursor.x] + line + currentLine.Text[e.cursor.x:]
 			e.cursor.x += len(line)
 		} else {
 			// Insert subsequent lines as new lines
-			e.content = append(e.content[:e.cursor.y+i], append([]string{line}, e.content[e.cursor.y+i:]...)...)
+			e.content = append(e.content[:e.cursor.y+i], append([]ColoredLine{{line, ColorDefault}}, e.content[e.cursor.y+i:]...)...)
 		}
 	}
 	// Move the cursor to the end of the inserted text
@@ -801,7 +857,7 @@ func (e *Editor) getCursorPosition(startX int) (int, int) {
 	var cursorX, cursorY int
 
 	for i := 0; i < e.cursor.y && i < len(e.content); i++ {
-		wrappedLines := (len(e.content[i]) + EditorWidth - 2) / (EditorWidth - 1)
+		wrappedLines := (len(e.content[i].Text) + EditorWidth - 2) / (EditorWidth - 1)
 		if wrappedLines == 0 {
 			wrappedLines = 1
 		}
@@ -809,7 +865,7 @@ func (e *Editor) getCursorPosition(startX int) (int, int) {
 	}
 
 	if e.cursor.y < len(e.content) {
-		cursorLine := e.content[e.cursor.y][:min(e.cursor.x, len(e.content[e.cursor.y]))]
+		cursorLine := e.content[e.cursor.y].Text[:min(e.cursor.x, len(e.content[e.cursor.y].Text))]
 		cursorX = runewidth.StringWidth(cursorLine) % (EditorWidth - 1)
 		cursorY = totalLines + runewidth.StringWidth(cursorLine)/(EditorWidth-1) - e.scroll
 	}
@@ -830,16 +886,16 @@ func (e *Editor) moveCursor(dx, dy int) {
 	if newX < 0 {
 		if newY > 0 {
 			newY--
-			newX = len(e.content[newY])
+			newX = len(e.content[newY].Text)
 		} else {
 			newX = 0
 		}
-	} else if newY < len(e.content) && newX > len(e.content[newY]) {
+	} else if newY < len(e.content) && newX > len(e.content[newY].Text) {
 		if newY < len(e.content)-1 {
 			newY++
 			newX = 0
 		} else {
-			newX = len(e.content[newY])
+			newX = len(e.content[newY].Text)
 		}
 	}
 
@@ -910,9 +966,9 @@ func (e *Editor) deleteSelection() {
 	}
 
 	if start.y == end.y {
-		e.content[start.y] = e.content[start.y][:start.x] + e.content[start.y][end.x:]
+		e.content[start.y].Text = e.content[start.y].Text[:start.x] + e.content[start.y].Text[end.x:]
 	} else {
-		e.content[start.y] = e.content[start.y][:start.x] + e.content[end.y][end.x:]
+		e.content[start.y].Text = e.content[start.y].Text[:start.x] + e.content[end.y].Text[end.x:]
 		e.content = append(e.content[:start.y+1], e.content[end.y+1:]...)
 	}
 
