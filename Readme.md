@@ -42,7 +42,6 @@ Upon running the application, you will be presented with the main menu. From her
 
 - Start a new chat
 - Continue a previous chat
-- View chat history
 - View API keys
 - Exit the application
 

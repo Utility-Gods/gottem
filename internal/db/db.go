@@ -3,9 +3,11 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -13,21 +15,28 @@ import (
 
 var db *sql.DB
 
-type Message struct {
-	ID        int
-	ChatID    int
-	Role      string
-	APIName   string
-	Content   string
-	CreatedAt time.Time
-}
-
 type Chat struct {
 	ID        int
 	Title     string
 	Context   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+func createTables() error {
+	schemaPath := filepath.Join("internal", "db", "schema.sql")
+	schemaContent, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("error reading schema file: %w", err)
+	}
+
+	_, err = db.Exec(string(schemaContent))
+	if err != nil {
+		return fmt.Errorf("error executing schema: %w", err)
+	}
+
+	log.Println("Database schema created successfully")
+	return nil
 }
 
 func InitDB() error {
@@ -55,22 +64,6 @@ func InitDB() error {
 	}
 
 	log.Println("Database initialized successfully")
-	return nil
-}
-
-func createTables() error {
-	schemaPath := filepath.Join("internal", "db", "schema.sql")
-	schemaContent, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return fmt.Errorf("error reading schema file: %w", err)
-	}
-
-	_, err = db.Exec(string(schemaContent))
-	if err != nil {
-		return fmt.Errorf("error executing schema: %w", err)
-	}
-
-	log.Println("Database schema created successfully")
 	return nil
 }
 
@@ -193,44 +186,28 @@ func DeleteAPIKey(apiName string) error {
 func GetChat(chatID int) (Chat, error) {
 	query := `SELECT id, title, context, created_at, updated_at FROM chats WHERE id = ?;`
 	var chat Chat
-	var nullableContext sql.NullString
-
 	err := db.QueryRow(query, chatID).Scan(
 		&chat.ID,
 		&chat.Title,
-		&nullableContext,
+		&chat.Context,
 		&chat.CreatedAt,
 		&chat.UpdatedAt,
 	)
-
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return Chat{}, fmt.Errorf("no chat found with ID %d", chatID)
-		}
-		log.Printf("Error retrieving chat with ID %d: %v", chatID, err)
-		return Chat{}, fmt.Errorf("failed to retrieve chat: %w", err)
+		return Chat{}, fmt.Errorf("failed to get chat: %w", err)
 	}
-
-	if nullableContext.Valid {
-		chat.Context = nullableContext.String
-	} else {
-		chat.Context = "" // or any default value you prefer
-	}
-
 	return chat, nil
 }
 
 func CreateChat(title string) (int, error) {
-	query := `INSERT INTO chats (title) VALUES (?);`
-	result, err := db.Exec(query, title)
+	query := `INSERT INTO chats (title, context) VALUES (?, ?);`
+	result, err := db.Exec(query, title, "")
 	if err != nil {
-		log.Printf("Error creating chat: %v", err)
-		return 0, err
+		return 0, fmt.Errorf("failed to create chat: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		log.Printf("Error getting last insert ID: %v", err)
-		return 0, err
+		return 0, fmt.Errorf("failed to get last insert ID: %w", err)
 	}
 	return int(id), nil
 }
@@ -268,38 +245,11 @@ func GetChats() ([]Chat, error) {
 	return chats, nil
 }
 
-func GetChatMessages(chatID int) ([]Message, error) {
-	query := `SELECT id, chat_id, role, api_name, content, created_at
-              FROM messages
-              WHERE chat_id = ?
-              ORDER BY created_at ASC;`
-	rows, err := db.Query(query, chatID)
-	if err != nil {
-		log.Printf("Error querying messages: %v", err)
-		return nil, err
-	}
-	defer rows.Close()
-
-	var messages []Message
-	for rows.Next() {
-		var msg Message
-		err := rows.Scan(&msg.ID, &msg.ChatID, &msg.Role, &msg.APIName, &msg.Content, &msg.CreatedAt)
-		if err != nil {
-			log.Printf("Error scanning message row: %v", err)
-			return nil, err
-		}
-		messages = append(messages, msg)
-	}
-
-	return messages, nil
-}
-
 func UpdateChatTitle(chatID int, newTitle string) error {
-	query := `UPDATE chats SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
+	query := `UPDATE chats SET title = ? WHERE id = ?;`
 	_, err := db.Exec(query, newTitle, chatID)
 	if err != nil {
-		log.Printf("Error updating chat title: %v", err)
-		return err
+		return fmt.Errorf("failed to update chat title: %w", err)
 	}
 	return nil
 }
@@ -324,15 +274,12 @@ func CloseDB() {
 	}
 }
 
-// UpdateChatContext updates the context of a specific chat
 func UpdateChatContext(chatID int, context string) error {
-	query := `UPDATE chats SET context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
+	query := `UPDATE chats SET context = ? WHERE id = ?;`
 	_, err := db.Exec(query, context, chatID)
 	if err != nil {
-		log.Printf("Error updating chat context for chat ID %d: %v", chatID, err)
 		return fmt.Errorf("failed to update chat context: %w", err)
 	}
-	// log.Printf("Chat context updated successfully for chat ID %d", chatID)
 	return nil
 }
 
@@ -347,7 +294,7 @@ func FlushDB() error {
 	defer tx.Rollback()
 
 	// List of tables to clear
-	tables := []string{"api_keys", "chats", "messages"}
+	tables := []string{"api_keys", "chats"}
 
 	// Disable foreign key constraints temporarily
 	_, err = tx.Exec("PRAGMA foreign_keys = OFF;")
@@ -385,73 +332,69 @@ func FlushDB() error {
 	return nil
 }
 
-func DeleteChatMessages(chatID int) error {
-	query := `DELETE FROM messages WHERE chat_id = ?;`
-	_, err := db.Exec(query, chatID)
-	if err != nil {
-		log.Printf("Error deleting messages for chat ID %d: %v", chatID, err)
-		return fmt.Errorf("failed to delete messages for chat ID %d: %w", chatID, err)
+func MigrateDatabase() error {
+	// Check current schema version
+	var version int
+	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check schema version: %w", err)
 	}
+
+	// If version is 0 or schema_version table doesn't exist, we assume it's a new database or very old version
+	if err == sql.ErrNoRows || version < 1 {
+		return migrateToVersion1()
+	}
+
+	// For future migrations, add more conditions here
+	// if version < 2 {
+	//     return migrateToVersion2()
+	// }
+
+	log.Println("Database schema is up to date")
 	return nil
 }
 
-func MigrateDatabase() error {
-	// Check if the context column exists in the chats table
-	var contextExists bool
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chats') WHERE name='context'").Scan(&contextExists)
+func migrateToVersion1() error {
+	log.Println("Migrating database to version 1")
+
+	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("error checking for context column: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Read the schema.sql file
+	schemaPath := filepath.Join("internal", "db", "schema.sql") // Adjust this path as necessary
+	schemaSQL, err := ioutil.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("error reading schema file: %w", err)
 	}
 
-	if !contextExists {
-		log.Println("Context column does not exist. Starting migration...")
+	// Split the schema into individual statements
+	statements := strings.Split(string(schemaSQL), ";")
 
-		// Start a transaction for the migration process
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("error starting transaction: %w", err)
+	// Execute each statement
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
 		}
-		defer tx.Rollback() // Rollback the transaction if it's not committed
-
-		// Add the context column
-		_, err = tx.Exec("ALTER TABLE chats ADD COLUMN context TEXT")
+		_, err = tx.Exec(stmt)
 		if err != nil {
-			return fmt.Errorf("error adding context column: %w", err)
+			return fmt.Errorf("error executing schema statement: %w", err)
 		}
-		log.Println("Added context column to chats table")
-
-		// Populate the context column with existing messages
-		_, err = tx.Exec(`
-			UPDATE chats
-			SET context = COALESCE(
-				(SELECT GROUP_CONCAT(
-					CASE
-						WHEN messages.role = 'user' THEN 'Human: ' || messages.content
-						ELSE 'Assistant: ' || messages.content
-					END,
-					char(10) || char(10)
-				)
-				FROM messages
-				WHERE messages.chat_id = chats.id
-				ORDER BY messages.created_at),
-				''
-			)
-		`)
-		if err != nil {
-			return fmt.Errorf("error populating context column: %w", err)
-		}
-		log.Println("Populated context column with existing messages")
-
-		// Commit the transaction
-		err = tx.Commit()
-		if err != nil {
-			return fmt.Errorf("error committing migration transaction: %w", err)
-		}
-
-		log.Println("Database migration completed successfully")
-	} else {
-		log.Println("Context column already exists. No migration needed.")
 	}
 
+	// Ensure the schema version is set to 1
+	_, err = tx.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (1)")
+	if err != nil {
+		return fmt.Errorf("failed to update schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Println("Migration to version 1 completed successfully")
 	return nil
 }

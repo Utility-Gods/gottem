@@ -41,9 +41,7 @@ type Editor struct {
 	screen      tcell.Screen
 	app         *api.App
 	chatID      int
-	messages    []db.Message
 	isDirty     bool
-	content     []string
 	cursor      Cursor
 	scroll      int
 	status      string
@@ -55,9 +53,10 @@ type Editor struct {
 	chatTitle   string
 	lastKey     rune
 	chat        db.Chat
+	content     []string
 }
 
-func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message) (*Editor, error) {
+func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 	logDir := filepath.Join("", "logs")
 
 	// Ensure the log directory exists
@@ -98,9 +97,8 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		screen:      screen,
 		app:         app,
 		chatID:      chatID,
-		messages:    messages,
 		isDirty:     false,
-		content:     []string{""},
+		content:     strings.Split(chat.Context, "\n"),
 		cursor:      Cursor{x: 0, y: 0},
 		apis:        app.GetAvailableAPIs(),
 		selectedAPI: 0,
@@ -110,7 +108,12 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		chatTitle:   chatTitle,
 		chat:        chat,
 	}
-	e.loadMessagesFromDB()
+
+	// If there's no content, add an empty line to start with
+	if len(e.content) == 0 {
+		e.content = append(e.content, "")
+	}
+
 	e.logger.Println("Editor initialized")
 	return e, nil
 }
@@ -148,35 +151,18 @@ func cleanupOldLogs(logDir string) error {
 	return nil
 }
 
-func (e *Editor) loadMessagesFromDB() error {
-	messages, err := db.GetChatMessages(e.chatID)
-	if err != nil {
-		return fmt.Errorf("failed to get chat messages: %w", err)
-	}
-
-	e.messages = messages
-	e.content = []string{""}
-	for _, msg := range e.messages {
-		e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
-			msg.CreatedAt.Format("2006-01-02 15:04:05"),
-			msg.Role,
-			msg.APIName,
-			msg.Content,
-		))
-		e.content = append(e.content, "")
-	}
-
-	return nil
+func (e *Editor) saveContext() error {
+	context := strings.Join(e.content, "\n")
+	return db.UpdateChatContext(e.chat.ID, context)
 }
 
 func (e *Editor) Run() error {
 	defer func() {
-		if err := e.saveMessagesToDB(); err != nil {
-			e.logger.Printf("Error saving messages to DB: %v", err)
+		if err := e.saveContext(); err != nil {
+			e.logger.Printf("Error saving chat context: %v", err)
 		}
 		e.screen.Fini()
 	}()
-
 	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 
 	for {
@@ -184,7 +170,6 @@ func (e *Editor) Run() error {
 		e.screen.Show()
 
 		ev := e.screen.PollEvent()
-		e.logger.Printf("Event received: %T", ev)
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			if e.handleKeyEvent(ev) {
@@ -196,77 +181,6 @@ func (e *Editor) Run() error {
 			e.logger.Println("Screen resized")
 		}
 	}
-}
-
-func (e *Editor) saveMessagesToDB() error {
-	// First, delete all existing messages for this chat
-	if err := db.DeleteChatMessages(e.chatID); err != nil {
-		return fmt.Errorf("failed to delete existing messages: %w", err)
-	}
-
-	// Parse the content in the editor's buffer to extract messages
-	var messages []db.Message
-	var currentMessage strings.Builder
-	var currentRole, currentAPIName string
-	var currentTime time.Time
-
-	for _, line := range e.content {
-		if strings.HasPrefix(line, "[") && strings.Contains(line, "]") {
-			// If we have a previous message, add it to the messages slice
-			if currentMessage.Len() > 0 {
-				messages = append(messages, db.Message{
-					ChatID:    e.chatID,
-					Role:      currentRole,
-					APIName:   currentAPIName,
-					Content:   strings.TrimSpace(currentMessage.String()),
-					CreatedAt: currentTime,
-				})
-				currentMessage.Reset()
-			}
-
-			// Parse the new message header
-			parts := strings.SplitN(line, "]", 2)
-			if len(parts) == 2 {
-				timeStr := strings.Trim(parts[0], "[]")
-				currentTime, _ = time.Parse("2006-01-02 15:04:05", timeStr)
-
-				roleParts := strings.SplitN(strings.TrimSpace(parts[1]), "(", 2)
-				if len(roleParts) == 2 {
-					currentRole = strings.TrimSpace(roleParts[0])
-					currentAPIName = strings.Trim(roleParts[1], ")")
-				}
-			}
-		} else {
-			currentMessage.WriteString(line + "\n")
-		}
-	}
-
-	// Add the last message if there is one
-	if currentMessage.Len() > 0 {
-		messages = append(messages, db.Message{
-			ChatID:    e.chatID,
-			Role:      currentRole,
-			APIName:   currentAPIName,
-			Content:   strings.TrimSpace(currentMessage.String()),
-			CreatedAt: currentTime,
-		})
-	}
-
-	// Insert the parsed messages into the database
-	for _, msg := range messages {
-		if err := db.AddMessage(e.chatID, msg.Role, msg.APIName, msg.Content); err != nil {
-			return fmt.Errorf("failed to add message: %w", err)
-		}
-	}
-
-	// Update the chat context
-	newContext := strings.Join(e.content, "\n")
-	if err := db.UpdateChatContext(e.chatID, newContext); err != nil {
-		return fmt.Errorf("failed to update chat context: %w", err)
-	}
-
-	e.isDirty = false
-	return nil
 }
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
@@ -632,13 +546,7 @@ func (e *Editor) insertChar(ch rune) {
 }
 
 func (e *Editor) sendQuery() {
-	var query string
-	if e.isTextSelected() {
-		query = e.getSelectedText()
-	} else {
-		query = e.getLastParagraph()
-	}
-
+	query := e.getLastParagraph()
 	apiInfo := e.apis[e.selectedAPI]
 
 	e.logger.Printf("Sending query to API %s: %s", apiInfo.Name, query)
@@ -653,14 +561,10 @@ func (e *Editor) sendQuery() {
 		return
 	}
 
-	e.appendMessage("user", apiInfo.Name, query)
-	e.appendMessage("assistant", apiInfo.Name, response)
+	// Append the query and response to the content
+	e.appendText(fmt.Sprintf("Assistant: %s\n", response))
 
-	newContext := strings.Join(e.content, "\n")
-	if err := db.UpdateChatContext(e.chat.ID, newContext); err != nil {
-		e.logger.Printf("Error updating chat context: %v", err)
-	}
-
+	e.isDirty = true
 	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+J to change API."
 	e.logger.Printf("Query sent and response received. Response length: %d", len(response))
 
@@ -700,11 +604,12 @@ func (e *Editor) getLastParagraph() string {
 }
 
 func (e *Editor) appendText(text string) {
-	lines := strings.Split(text, "\n")
-	e.content = append(e.content, lines...)
+	newLines := strings.Split(text, "\n")
+	e.content = append(e.content, newLines...)
 	e.cursor.y = len(e.content) - 1
 	e.cursor.x = len(e.content[e.cursor.y])
 	e.adjustScroll()
+	e.isDirty = true
 }
 
 func (e *Editor) getCurrentLine() string {
@@ -712,26 +617,6 @@ func (e *Editor) getCurrentLine() string {
 		return e.content[e.cursor.y]
 	}
 	return ""
-}
-
-func (e *Editor) appendMessage(role, apiName, content string) {
-	message := db.Message{
-		ChatID:    e.chatID,
-		Role:      role,
-		APIName:   apiName,
-		Content:   content,
-		CreatedAt: time.Now(),
-	}
-	e.messages = append(e.messages, message)
-	e.isDirty = true
-
-	e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
-		message.CreatedAt.Format("2006-01-02 15:04:05"),
-		message.Role,
-		message.APIName,
-		message.Content,
-	))
-	e.content = append(e.content, "")
 }
 
 func (e *Editor) adjustScroll() {
@@ -905,19 +790,17 @@ func (e *Editor) isSelected(x, y int) bool {
 func (e *Editor) quitEditor() {
 	e.logger.Println("Quitting editor")
 
-	// Save messages to DB
-	if err := e.saveMessagesToDB(); err != nil {
-		e.logger.Printf("Error saving messages to DB: %v", err)
-		e.status = fmt.Sprintf("Error saving chat: %v", err)
-		e.draw()
-		e.screen.Show()
-		time.Sleep(2 * time.Second) // Give user time to see the error message
+	if e.isDirty {
+		if err := e.saveContext(); err != nil {
+			e.logger.Printf("Error saving chat context: %v", err)
+			e.status = fmt.Sprintf("Error saving chat: %v", err)
+			e.draw()
+			e.screen.Show()
+			time.Sleep(2 * time.Second) // Give user time to see the error message
+		} else {
+			e.logger.Println("Chat context saved successfully")
+		}
 	}
-
-	// Update the chat's last modified time
-	// if err := db.UpdateChatLastModified(e.chatID); err != nil {
-	// 	e.logger.Printf("Error updating chat last modified time: %v", err)
-	// }
 
 	e.screen.Clear()
 	e.screen.Sync()

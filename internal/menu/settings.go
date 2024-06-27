@@ -12,7 +12,7 @@ func SettingsMenu() {
 	for {
 		prompt := promptui.Select{
 			Label: "Settings Menu",
-			Items: []string{"API Keys", "View API Keys", "Delete API Key", "Flush DB", "Run Migration", "Back to Main Menu"},
+			Items: []string{"Set API Keys", "View API Keys", "Delete API Key", "Flush DB", "Run Migration", "Back to Main Menu"},
 		}
 
 		_, result, err := prompt.Run()
@@ -22,7 +22,7 @@ func SettingsMenu() {
 		}
 
 		switch result {
-		case "API Keys":
+		case "Set API Keys":
 			APIKeyMenu()
 		case "View API Keys":
 			ViewAPIKeys()
