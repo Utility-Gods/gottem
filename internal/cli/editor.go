@@ -13,6 +13,7 @@ import (
 	"github.com/Utility-Gods/gottem/internal/db"
 	"github.com/Utility-Gods/gottem/pkg/types"
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
 type EditorMode int
@@ -38,23 +39,29 @@ type Selection struct {
 }
 
 type Editor struct {
-	screen      tcell.Screen
-	app         *api.App
-	chatID      int
-	isDirty     bool
-	cursor      Cursor
-	scroll      int
-	status      string
-	apis        []types.APIInfo
-	selectedAPI int
-	logger      *log.Logger
-	mode        EditorMode
-	selection   Selection
-	chatTitle   string
-	lastKey     rune
-	chat        db.Chat
-	content     []string
+	screen         tcell.Screen
+	app            *api.App
+	chatID         int
+	isDirty        bool
+	cursor         Cursor
+	scroll         int
+	status         string
+	apis           []types.APIInfo
+	selectedAPI    int
+	logger         *log.Logger
+	mode           EditorMode
+	selection      Selection
+	chatTitle      string
+	lastKey        rune
+	chat           db.Chat
+	content        []string
+	wrappedContent [][]rune
 }
+
+const (
+	EditorWidth = 80 // Fixed width of the editor
+	BorderColor = tcell.ColorDarkRed
+)
 
 func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 	logDir := filepath.Join("", "logs")
@@ -154,6 +161,33 @@ func cleanupOldLogs(logDir string) error {
 	}
 
 	return nil
+}
+
+func (e *Editor) wrapContent() {
+	e.wrappedContent = make([][]rune, 0)
+	for _, line := range e.content {
+		if len(line) == 0 {
+			e.wrappedContent = append(e.wrappedContent, []rune{})
+			continue
+		}
+
+		var wrappedLine []rune
+		lineWidth := 0
+		for _, ch := range []rune(line) {
+			chWidth := runewidth.RuneWidth(ch)
+			if lineWidth+chWidth > EditorWidth-1 {
+				e.wrappedContent = append(e.wrappedContent, wrappedLine)
+				wrappedLine = []rune{ch}
+				lineWidth = chWidth
+			} else {
+				wrappedLine = append(wrappedLine, ch)
+				lineWidth += chWidth
+			}
+		}
+		if len(wrappedLine) > 0 {
+			e.wrappedContent = append(e.wrappedContent, wrappedLine)
+		}
+	}
 }
 
 func (e *Editor) setDefaultAPI() error {
@@ -402,33 +436,57 @@ func (e *Editor) getModeColor() tcell.Color {
 func (e *Editor) draw() {
 	e.screen.Clear()
 	width, height := e.screen.Size()
-
 	contentHeight := height - StatusBarHeight
 
+	e.wrapContent() // Wrap content before drawing
+
+	// Calculate the starting X position to center the editor
+	startX := (width - EditorWidth) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	// Draw content
 	for y := 0; y < contentHeight; y++ {
 		if y+e.scroll < len(e.content) {
 			line := e.content[y+e.scroll]
-			for x, ch := range []rune(line) {
-				if x < width {
+			x := startX
+			for _, ch := range []rune(line) {
+				if x-startX < EditorWidth-1 { // Leave space for the border
 					style := tcell.StyleDefault
-					if e.isSelected(x, y+e.scroll) {
+					if e.isSelected(x-startX, y+e.scroll) {
 						style = style.Reverse(true)
 					}
 					e.screen.SetContent(x, y, ch, nil, style)
+					x += runewidth.RuneWidth(ch)
+				} else {
+					break
 				}
 			}
+			// Fill the rest of the line with spaces
+			for ; x < startX+EditorWidth-1; x++ {
+				e.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+			}
+		} else {
+			// Fill empty lines with spaces
+			for x := startX; x < startX+EditorWidth-1; x++ {
+				e.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+			}
 		}
+		// Draw the right border
+		e.screen.SetContent(startX+EditorWidth-1, y, '│', nil, tcell.StyleDefault.Foreground(BorderColor))
 	}
 
 	// Draw cursor
+	cursorX := e.cursor.x + startX
 	cursorY := e.cursor.y - e.scroll
-	if cursorY >= 0 && cursorY < contentHeight {
-		e.screen.ShowCursor(e.cursor.x, cursorY)
+	if cursorY >= 0 && cursorY < contentHeight && cursorX < startX+EditorWidth-1 {
+		e.screen.ShowCursor(cursorX, cursorY)
 	} else {
 		e.screen.HideCursor()
 	}
 
-	// Draw multiline status bar
+	// Draw status bar
 	e.drawStatusBar(width, height)
 
 	e.screen.Show()
@@ -493,6 +551,21 @@ func (e *Editor) drawStatusBar(width, height int) {
 	// Line 5: Cursor position and content info
 	contentInfo := fmt.Sprintf("Ln %d, Col %d | %d lines", e.cursor.y+1, e.cursor.x+1, len(e.content))
 	e.drawStatusBarLine(contentInfo, width, height-1, statusStyle)
+
+	statusBarWidth := EditorWidth
+	startX := (width - statusBarWidth) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	for i := 0; i < StatusBarHeight; i++ {
+		y := height - StatusBarHeight + i
+		// Draw status bar content
+		// ... (adjust your existing status bar drawing code to use startX and statusBarWidth)
+
+		// Draw right border for status bar
+		e.screen.SetContent(startX+statusBarWidth-1, y, '│', nil, tcell.StyleDefault.Foreground(BorderColor))
+	}
 }
 
 func (e *Editor) drawStatusBarLine(text string, width, y int, style tcell.Style) {
@@ -542,12 +615,20 @@ func (e *Editor) moveSelection(dx, dy int) {
 
 func (e *Editor) insertNewLine() {
 	e.logger.Printf("Inserting new line at (%d, %d)", e.cursor.x, e.cursor.y)
-	newLine := e.content[e.cursor.y][e.cursor.x:]
-	e.content[e.cursor.y] = e.content[e.cursor.y][:e.cursor.x]
-	e.content = append(e.content[:e.cursor.y+1], append([]string{newLine}, e.content[e.cursor.y+1:]...)...)
+	if e.cursor.y >= len(e.content) {
+		e.content = append(e.content, "")
+		e.cursor.y = len(e.content) - 1
+		e.cursor.x = 0
+		return
+	}
+
+	line := e.content[e.cursor.y]
+	e.content = append(e.content[:e.cursor.y+1], e.content[e.cursor.y:]...)
+	e.content[e.cursor.y] = line[:e.cursor.x]
+	e.content[e.cursor.y+1] = line[e.cursor.x:]
 	e.cursor.y++
 	e.cursor.x = 0
-	e.adjustScroll()
+	e.isDirty = true
 	e.logger.Printf("New line inserted, cursor now at (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
@@ -558,20 +639,42 @@ func (e *Editor) backspace() {
 		e.content[e.cursor.y] = line[:e.cursor.x-1] + line[e.cursor.x:]
 		e.cursor.x--
 	} else if e.cursor.y > 0 {
+		prevLine := e.content[e.cursor.y-1]
+		e.cursor.x = len(prevLine)
+		e.content[e.cursor.y-1] += e.content[e.cursor.y]
+		if e.cursor.y < len(e.content)-1 {
+			e.content = append(e.content[:e.cursor.y], e.content[e.cursor.y+1:]...)
+		} else {
+			e.content = e.content[:e.cursor.y]
+		}
 		e.cursor.y--
-		e.cursor.x = len(e.content[e.cursor.y])
-		e.content[e.cursor.y] += e.content[e.cursor.y+1]
-		e.content = append(e.content[:e.cursor.y+1], e.content[e.cursor.y+2:]...)
 	}
+	e.isDirty = true
 	e.logger.Printf("After backspace, cursor at (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
 func (e *Editor) insertChar(ch rune) {
-	e.logger.Printf("Inserting character '%c' at (%d, %d)", ch, e.cursor.x, e.cursor.y)
+	if e.cursor.y >= len(e.content) {
+		// If the cursor is beyond the last line, add a new line
+		e.content = append(e.content, "")
+	}
+
 	line := e.content[e.cursor.y]
+	if e.cursor.x > len(line) {
+		// If the cursor is beyond the end of the line, move it to the end
+		e.cursor.x = len(line)
+	}
+
 	e.content[e.cursor.y] = line[:e.cursor.x] + string(ch) + line[e.cursor.x:]
 	e.cursor.x++
-	e.logger.Printf("After insertion, cursor at (%d, %d)", e.cursor.x, e.cursor.y)
+	e.isDirty = true
+
+	// Check if we need to wrap
+	if runewidth.StringWidth(e.content[e.cursor.y][:e.cursor.x]) >= EditorWidth-1 {
+		e.insertNewLine()
+		e.cursor.y++
+		e.cursor.x = 0
+	}
 }
 
 func (e *Editor) sendQuery() {
@@ -633,12 +736,19 @@ func (e *Editor) getLastParagraph() string {
 }
 
 func (e *Editor) appendText(text string) {
-	newLines := strings.Split(text, "\n")
-	e.content = append(e.content, newLines...)
-	e.cursor.y = len(e.content) - 1
-	e.cursor.x = len(e.content[e.cursor.y])
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i > 0 || len(e.content) == 0 {
+			e.content = append(e.content, "")
+			e.cursor.y++
+			e.cursor.x = 0
+		}
+
+		for _, ch := range line {
+			e.insertChar(ch)
+		}
+	}
 	e.adjustScroll()
-	e.isDirty = true
 }
 
 func (e *Editor) getCurrentLine() string {
@@ -652,14 +762,16 @@ func (e *Editor) adjustScroll() {
 	_, height := e.screen.Size()
 	contentHeight := height - StatusBarHeight
 
-	// Scroll down if the cursor is below the visible area
-	if e.cursor.y >= e.scroll+contentHeight {
-		e.scroll = e.cursor.y - contentHeight + 1
+	cursorY := 0
+	for i := 0; i < e.cursor.y; i++ {
+		cursorY += (len(e.content[i]) + EditorWidth - 2) / (EditorWidth - 1)
 	}
+	cursorY += e.cursor.x / (EditorWidth - 1)
 
-	// Scroll up if the cursor is above the visible area
-	if e.cursor.y < e.scroll {
-		e.scroll = e.cursor.y
+	if cursorY < e.scroll {
+		e.scroll = cursorY
+	} else if cursorY >= e.scroll+contentHeight {
+		e.scroll = cursorY - contentHeight + 1
 	}
 }
 
@@ -684,6 +796,27 @@ func (e *Editor) insertText(text string) {
 	e.adjustScroll()
 }
 
+func (e *Editor) getCursorPosition(startX int) (int, int) {
+	var totalLines int
+	var cursorX, cursorY int
+
+	for i := 0; i < e.cursor.y && i < len(e.content); i++ {
+		wrappedLines := (len(e.content[i]) + EditorWidth - 2) / (EditorWidth - 1)
+		if wrappedLines == 0 {
+			wrappedLines = 1
+		}
+		totalLines += wrappedLines
+	}
+
+	if e.cursor.y < len(e.content) {
+		cursorLine := e.content[e.cursor.y][:min(e.cursor.x, len(e.content[e.cursor.y]))]
+		cursorX = runewidth.StringWidth(cursorLine) % (EditorWidth - 1)
+		cursorY = totalLines + runewidth.StringWidth(cursorLine)/(EditorWidth-1) - e.scroll
+	}
+
+	return startX + cursorX, cursorY
+}
+
 // Update the moveCursor function to handle end of lines better
 func (e *Editor) moveCursor(dx, dy int) {
 	newY := e.cursor.y + dy
@@ -701,7 +834,7 @@ func (e *Editor) moveCursor(dx, dy int) {
 		} else {
 			newX = 0
 		}
-	} else if newX > len(e.content[newY]) {
+	} else if newY < len(e.content) && newX > len(e.content[newY]) {
 		if newY < len(e.content)-1 {
 			newY++
 			newX = 0
@@ -834,4 +967,12 @@ func (e *Editor) quitEditor() {
 	e.screen.Clear()
 	e.screen.Sync()
 	e.screen.Fini()
+}
+
+// Helper function to get the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
