@@ -261,3 +261,14 @@ func CloseDB() {
 		}
 	}
 }
+
+func DeleteAPIKey(apiName string) error {
+	query := `DELETE FROM api_keys WHERE api_name = ?;`
+	_, err := db.Exec(query, apiName)
+	if err != nil {
+		log.Printf("Error deleting API key for %s: %v", apiName, err)
+		return err
+	}
+	log.Printf("API key for %s deleted successfully", apiName)
+	return nil
+}

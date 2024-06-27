@@ -21,8 +21,6 @@ func RunCLI(app *api.App) {
 			continuePreviousChat(app)
 		case "View chat history":
 			viewChatHistory()
-		case "View API keys":
-			viewAPIKeys()
 		case "Exit":
 			fmt.Println("Goodbye!")
 			return
@@ -33,7 +31,7 @@ func RunCLI(app *api.App) {
 func displayMainMenu() string {
 	prompt := promptui.Select{
 		Label: "Select an option",
-		Items: []string{"Start a new chat", "Continue a previous chat", "View chat history", "View API keys", "Exit"},
+		Items: []string{"Start a new chat", "Continue a previous chat", "View chat history", "Exit"},
 	}
 
 	_, result, err := prompt.Run()
@@ -142,34 +140,6 @@ func viewChatHistory() {
 		)
 	}
 	fmt.Println("--- End of Chat History ---")
-
-	prompt := promptui.Prompt{
-		Label:     "Press Enter to continue",
-		IsConfirm: true,
-	}
-	_, err = prompt.Run()
-	if err != nil {
-		fmt.Printf("Prompt failed %v\n", err)
-	}
-}
-
-func viewAPIKeys() {
-	apiKeys, err := db.GetAllAPIKeys()
-	if err != nil {
-		fmt.Printf("Error retrieving API keys: %v\n", err)
-		return
-	}
-
-	if len(apiKeys) == 0 {
-		fmt.Println("No API keys found.")
-		return
-	}
-
-	fmt.Println("\n--- API Keys ---")
-	for _, key := range apiKeys {
-		maskedKey := maskAPIKey(key.APIKey)
-		fmt.Printf("API Name: %s\nAPI Key: %s\n\n", key.APIName, maskedKey)
-	}
 
 	prompt := promptui.Prompt{
 		Label:     "Press Enter to continue",

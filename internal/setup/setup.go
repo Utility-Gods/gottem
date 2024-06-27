@@ -11,7 +11,7 @@ func RunSetup() error {
 	for {
 		prompt := promptui.Select{
 			Label: "Select action",
-			Items: []string{"Set Claude API Key", "Set OpenAI API Key", "Set Other API Key", "Exit Setup"},
+			Items: []string{"Set Claude API Key", "Set OpenAI API Key", "Set Groq API Key", "Exit Setup"},
 		}
 
 		_, result, err := prompt.Run()
