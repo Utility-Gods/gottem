@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Utility-Gods/gottem/internal/api"
@@ -20,6 +21,10 @@ const (
 	VisualMode
 	InsertMode
 	APISelectMode
+)
+
+const (
+	StatusBarHeight = 3
 )
 
 type Cursor struct {
@@ -228,11 +233,26 @@ func (e *Editor) handleAPISelectModeKey(ev *tcell.EventKey) bool {
 	return false
 }
 
+func (e *Editor) getModeColor() tcell.Color {
+	switch e.mode {
+	case NormalMode:
+		return tcell.ColorRed
+	case InsertMode:
+		return tcell.ColorGreen
+	case VisualMode:
+		return tcell.ColorBlue
+	case APISelectMode:
+		return tcell.ColorYellow
+	default:
+		return tcell.ColorWhite
+	}
+}
+
 func (e *Editor) draw() {
 	e.screen.Clear()
 	width, height := e.screen.Size()
 
-	contentHeight := height - 4 // Reserve 4 lines for the status bar
+	contentHeight := height - StatusBarHeight
 
 	for y := 0; y < contentHeight; y++ {
 		if y+e.scroll < len(e.content) {
@@ -263,32 +283,60 @@ func (e *Editor) draw() {
 	e.screen.Show()
 }
 
+func (e *Editor) getModeInfo() string {
+	switch e.mode {
+	case NormalMode:
+		return fmt.Sprintf("NORMAL MODE | Ln %d, Col %d | h/j/k/l: Move cursor", e.cursor.y+1, e.cursor.x+1)
+	case InsertMode:
+		return fmt.Sprintf("INSERT MODE | Ln %d, Col %d | Type to insert text, Enter: New line, Backspace: Delete", e.cursor.y+1, e.cursor.x+1)
+	case VisualMode:
+		return fmt.Sprintf("VISUAL MODE | Ln %d, Col %d | h/j/k/l: Extend selection, y: Yank, d: Delete", e.cursor.y+1, e.cursor.x+1)
+	case APISelectMode:
+		return fmt.Sprintf("API SELECT MODE | Current API: %s | ←/→: Change API, Enter: Confirm, Esc: Cancel", e.apis[e.selectedAPI].Name)
+	default:
+		return "UNKNOWN MODE"
+	}
+}
+
+func (e *Editor) getModeInstructions() string {
+	switch e.mode {
+	case NormalMode:
+		return "v: Enter Visual Mode | i: Enter Insert Mode | gg: Go to top | G: Go to bottom"
+	case InsertMode:
+		return "Esc: Exit Insert Mode"
+	case VisualMode:
+		return "Esc: Exit Visual Mode"
+	case APISelectMode:
+		return "Esc: Exit API Select Mode"
+	default:
+		return ""
+	}
+}
+
 func (e *Editor) drawStatusBar(width, height int) {
+	modeColor := e.getModeColor()
 	statusStyle := tcell.StyleDefault.
-		Background(tcell.ColorNavy).
-		Foreground(tcell.ColorWhite)
+		Background(modeColor).
+		Foreground(tcell.ColorBlack)
 
-	// Line 1: Mode and API information
-	modeLine := fmt.Sprintf("Mode: %s | API: %s", e.getModeString(), e.apis[e.selectedAPI].Name)
-	e.drawStatusBarLine(modeLine, width, height-4, statusStyle)
+	modeInfo := e.getModeInfo()
+	e.drawStatusBarLine(modeInfo, width, height-StatusBarHeight, statusStyle)
 
-	// Line 2: Cursor position and basic commands
-	cursorLine := fmt.Sprintf("Ln %d, Col %d | Ctrl+E: Send Query | Ctrl+J: Select API | Ctrl+Q: Quit", e.cursor.y+1, e.cursor.x+1)
-	e.drawStatusBarLine(cursorLine, width, height-3, statusStyle)
+	modeInstructions := e.getModeInstructions()
+	e.drawStatusBarLine(modeInstructions, width, height-2, statusStyle)
 
-	// Line 3 & 4: Mode-specific instructions
-	instructions := e.getModeInstructions()
-	e.drawStatusBarLine(instructions[0], width, height-2, statusStyle)
-	e.drawStatusBarLine(instructions[1], width, height-1, statusStyle)
+	generalInstructions := "Ctrl+E: Send Query | Ctrl+J: Select API | Ctrl+Q: Quit"
+	e.drawStatusBarLine(generalInstructions, width, height-1, statusStyle)
 }
 
 func (e *Editor) drawStatusBarLine(text string, width, y int, style tcell.Style) {
-	for x := 0; x < width; x++ {
-		if x < len(text) {
-			e.screen.SetContent(x, y, rune(text[x]), nil, style)
-		} else {
-			e.screen.SetContent(x, y, ' ', nil, style)
-		}
+	padding := width - len(text)
+	paddedText := text
+	if padding > 0 {
+		paddedText += strings.Repeat(" ", padding)
+	}
+	for x, ch := range paddedText {
+		e.screen.SetContent(x, y, ch, nil, style)
 	}
 }
 
@@ -305,25 +353,6 @@ func (e *Editor) getModeString() string {
 	default:
 		return "Unknown"
 	}
-}
-
-func (e *Editor) getModeInstructions() [2]string {
-	var instructions [2]string
-	switch e.mode {
-	case NormalMode:
-		instructions[0] = "v: Enter Visual Mode | i: Enter Insert Mode"
-		instructions[1] = "h/j/k/l: Move cursor | gg: Go to top | G: Go to bottom"
-	case VisualMode:
-		instructions[0] = "Esc: Exit Visual Mode | h/j/k/l: Extend selection"
-		instructions[1] = "y: Yank selection | d: Delete selection"
-	case InsertMode:
-		instructions[0] = "Esc: Exit Insert Mode"
-		instructions[1] = "Type to insert text | Enter: New line | Backspace: Delete"
-	case APISelectMode:
-		instructions[0] = "← →: Change API | Enter: Confirm selection"
-		instructions[1] = "Esc: Cancel selection"
-	}
-	return instructions
 }
 
 func (e *Editor) moveCursor(dx, dy int) {
@@ -440,13 +469,6 @@ func (e *Editor) sendQuery() {
 	e.logger.Printf("Query sent and response received. Response length: %d", len(response))
 }
 
-func (e *Editor) selectAPI() {
-	e.logger.Println("Entering API selection mode")
-	e.mode = APISelectMode
-	e.status = "Use ← → arrows to change API, Enter to confirm, Esc to cancel"
-	e.draw()
-}
-
 func (e *Editor) cycleAPI(forward bool) {
 	if forward {
 		e.selectedAPI = (e.selectedAPI + 1) % len(e.apis)
@@ -461,31 +483,32 @@ func (e *Editor) enterVisualMode() {
 	e.mode = VisualMode
 	e.selection.start = e.cursor
 	e.selection.end = e.cursor
-	e.status = "Visual Mode | Esc: Exit, h/j/k/l: Move selection, y: Yank, d: Delete"
 	e.logger.Println("Entered Visual Mode")
 }
 
 func (e *Editor) exitVisualMode() {
 	e.mode = NormalMode
-	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 	e.logger.Println("Exited Visual Mode")
 }
 
 func (e *Editor) enterInsertMode() {
 	e.mode = InsertMode
-	e.status = "Insert Mode | Esc: Exit"
 	e.logger.Println("Entered Insert Mode")
 }
 
 func (e *Editor) exitInsertMode() {
 	e.mode = NormalMode
-	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 	e.logger.Println("Exited Insert Mode")
+}
+
+func (e *Editor) selectAPI() {
+	e.logger.Println("Entering API selection mode")
+	e.mode = APISelectMode
+	e.draw()
 }
 
 func (e *Editor) yankSelection() {
 	// TODO: Implement clipboard functionality
-	e.status = "Selection yanked (clipboard functionality not implemented)"
 	e.exitVisualMode()
 }
 
@@ -503,7 +526,6 @@ func (e *Editor) deleteSelection() {
 	}
 
 	e.cursor = start
-	e.status = "Selection deleted"
 	e.exitVisualMode()
 }
 
