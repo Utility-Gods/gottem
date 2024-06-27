@@ -109,6 +109,11 @@ func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 		chat:        chat,
 	}
 
+	// Set default API to the first one with a key set
+	if err := e.setDefaultAPI(); err != nil {
+		return nil, fmt.Errorf("failed to set default API: %w", err)
+	}
+
 	// If there's no content, add an empty line to start with
 	if len(e.content) == 0 {
 		e.content = append(e.content, "")
@@ -148,6 +153,30 @@ func cleanupOldLogs(logDir string) error {
 		}
 	}
 
+	return nil
+}
+
+func (e *Editor) setDefaultAPI() error {
+	apiKeys, err := db.GetAllAPIKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get API keys: %w", err)
+	}
+
+	// Create a map for easier lookup
+	apiKeyMap := make(map[string]string)
+	for _, key := range apiKeys {
+		apiKeyMap[key.APIName] = key.APIKey
+	}
+
+	for i, api := range e.apis {
+		if _, ok := apiKeyMap[api.Name]; ok {
+			e.selectedAPI = i
+			log.Printf("Default API set to: %s", api.Name)
+			return nil
+		}
+	}
+
+	log.Println("No API key found, using the first API as default")
 	return nil
 }
 
