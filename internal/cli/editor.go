@@ -51,6 +51,7 @@ type Editor struct {
 	mode        EditorMode
 	selection   Selection
 	chatTitle   string
+	lastKey     rune
 }
 
 func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message) (*Editor, error) {
@@ -153,21 +154,22 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 
 func (e *Editor) handleNormalModeKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
+	case tcell.KeyCtrlQ:
+		e.logger.Println("Quit command received")
+		e.mode = QuitMode
+		e.status = "Are you sure you want to quit? (y/n)"
+		e.draw()
+		return false
 	case tcell.KeyCtrlE:
 		e.logger.Println("Send query command received")
 		e.sendQuery()
 	case tcell.KeyCtrlJ:
 		e.logger.Println("Select API command received")
 		e.selectAPI()
-	case tcell.KeyCtrlQ:
-		e.logger.Println("Quit command received")
-		e.enterQuitMode()
+	case tcell.KeyLeft, tcell.KeyRight, tcell.KeyUp, tcell.KeyDown:
+		e.handleArrowKeys(ev.Key())
 	case tcell.KeyRune:
 		switch ev.Rune() {
-		case 'v':
-			e.enterVisualMode()
-		case 'i':
-			e.enterInsertMode()
 		case 'h':
 			e.moveCursor(-1, 0)
 		case 'j':
@@ -176,9 +178,67 @@ func (e *Editor) handleNormalModeKey(ev *tcell.EventKey) bool {
 			e.moveCursor(0, -1)
 		case 'l':
 			e.moveCursor(1, 0)
+		case 'v':
+			e.enterVisualMode()
+		case 'i':
+			e.enterInsertMode()
+		case 'g':
+			// Handle 'gg' to go to the top of the file
+			if e.lastKey == 'g' {
+				e.moveCursorToTop()
+			}
+		case 'G':
+			e.moveCursorToBottom()
 		}
 	}
+	e.lastKey = ev.Rune() // Store the last key pressed for 'gg' functionality
+	e.draw()
 	return false
+}
+
+func (e *Editor) handleArrowKeys(key tcell.Key) {
+	switch key {
+	case tcell.KeyLeft:
+		e.moveCursor(-1, 0)
+	case tcell.KeyRight:
+		e.moveCursor(1, 0)
+	case tcell.KeyUp:
+		e.moveCursor(0, -1)
+	case tcell.KeyDown:
+		e.moveCursor(0, 1)
+	}
+}
+
+func (e *Editor) moveCursor(dx, dy int) {
+	newY := e.cursor.y + dy
+	if newY < 0 {
+		newY = 0
+	} else if newY >= len(e.content) {
+		newY = len(e.content) - 1
+	}
+
+	newX := e.cursor.x + dx
+	if newX < 0 {
+		newX = 0
+	} else if newX > len(e.content[newY]) {
+		newX = len(e.content[newY])
+	}
+
+	e.cursor.x = newX
+	e.cursor.y = newY
+	e.adjustScroll()
+}
+
+func (e *Editor) moveCursorToTop() {
+	e.cursor.y = 0
+	e.cursor.x = 0
+	e.adjustScroll()
+}
+
+func (e *Editor) moveCursorToBottom() {
+	e.cursor.y = len(e.content) - 1
+	e.cursor.x = 0
+	e.adjustScroll()
 }
 
 func (e *Editor) handleVisualModeKey(ev *tcell.EventKey) bool {
@@ -396,22 +456,6 @@ func (e *Editor) getModeString() string {
 	default:
 		return "Unknown"
 	}
-}
-
-func (e *Editor) moveCursor(dx, dy int) {
-	newX, newY := e.cursor.x+dx, e.cursor.y+dy
-	if newY >= 0 && newY < len(e.content) {
-		e.cursor.y = newY
-		if newX >= 0 && newX <= len(e.content[newY]) {
-			e.cursor.x = newX
-		} else if newX < 0 {
-			e.cursor.x = 0
-		} else {
-			e.cursor.x = len(e.content[newY])
-		}
-	}
-	e.adjustScroll()
-	e.logger.Printf("Cursor moved to (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
 func (e *Editor) moveSelection(dx, dy int) {
