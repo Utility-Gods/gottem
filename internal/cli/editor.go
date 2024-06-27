@@ -24,7 +24,7 @@ const (
 )
 
 const (
-	StatusBarHeight = 3
+	StatusBarHeight = 5
 )
 
 type Cursor struct {
@@ -49,9 +49,10 @@ type Editor struct {
 	logger      *log.Logger
 	mode        EditorMode
 	selection   Selection
+	chatTitle   string
 }
 
-func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error) {
+func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message) (*Editor, error) {
 	logDir := filepath.Join("", "logs")
 
 	logFile, err := os.OpenFile(filepath.Join(logDir, fmt.Sprintf("editor_%d.log", time.Now().Unix())),
@@ -84,6 +85,7 @@ func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error)
 		logger:      logger,
 		mode:        NormalMode,
 		selection:   Selection{start: Cursor{x: 0, y: 0}, end: Cursor{x: 0, y: 0}},
+		chatTitle:   chatTitle,
 	}
 	e.loadMessages()
 	e.logger.Println("Editor initialized")
@@ -150,6 +152,7 @@ func (e *Editor) handleNormalModeKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyCtrlQ:
 		e.logger.Println("Quit command received")
+
 		e.quitEditor()
 		return true
 	case tcell.KeyCtrlE:
@@ -286,13 +289,13 @@ func (e *Editor) draw() {
 func (e *Editor) getModeInfo() string {
 	switch e.mode {
 	case NormalMode:
-		return fmt.Sprintf("NORMAL MODE | Ln %d, Col %d | h/j/k/l: Move cursor", e.cursor.y+1, e.cursor.x+1)
+		return "NORMAL MODE | h/j/k/l: Move cursor"
 	case InsertMode:
-		return fmt.Sprintf("INSERT MODE | Ln %d, Col %d | Type to insert text, Enter: New line, Backspace: Delete", e.cursor.y+1, e.cursor.x+1)
+		return "INSERT MODE | Type to insert text, Enter: New line, Backspace: Delete"
 	case VisualMode:
-		return fmt.Sprintf("VISUAL MODE | Ln %d, Col %d | h/j/k/l: Extend selection, y: Yank, d: Delete", e.cursor.y+1, e.cursor.x+1)
+		return "VISUAL MODE | h/j/k/l: Extend selection, y: Yank, d: Delete"
 	case APISelectMode:
-		return fmt.Sprintf("API SELECT MODE | Current API: %s | ←/→: Change API, Enter: Confirm, Esc: Cancel", e.apis[e.selectedAPI].Name)
+		return "API SELECT MODE | ←/→: Change API, Enter: Confirm, Esc: Cancel"
 	default:
 		return "UNKNOWN MODE"
 	}
@@ -319,14 +322,25 @@ func (e *Editor) drawStatusBar(width, height int) {
 		Background(modeColor).
 		Foreground(tcell.ColorBlack)
 
+	// Line 1: Chat title and selected API
+	titleAndAPI := fmt.Sprintf("Chat: %s | API: %s", e.chatTitle, e.apis[e.selectedAPI].Name)
+	e.drawStatusBarLine(titleAndAPI, width, height-StatusBarHeight, statusStyle)
+
+	// Line 2: Mode info
 	modeInfo := e.getModeInfo()
-	e.drawStatusBarLine(modeInfo, width, height-StatusBarHeight, statusStyle)
+	e.drawStatusBarLine(modeInfo, width, height-4, statusStyle)
 
+	// Line 3: Mode-specific instructions
 	modeInstructions := e.getModeInstructions()
-	e.drawStatusBarLine(modeInstructions, width, height-2, statusStyle)
+	e.drawStatusBarLine(modeInstructions, width, height-3, statusStyle)
 
+	// Line 4: General instructions
 	generalInstructions := "Ctrl+E: Send Query | Ctrl+J: Select API | Ctrl+Q: Quit"
-	e.drawStatusBarLine(generalInstructions, width, height-1, statusStyle)
+	e.drawStatusBarLine(generalInstructions, width, height-2, statusStyle)
+
+	// Line 5: Cursor position and content info
+	contentInfo := fmt.Sprintf("Ln %d, Col %d | %d lines", e.cursor.y+1, e.cursor.x+1, len(e.content))
+	e.drawStatusBarLine(contentInfo, width, height-1, statusStyle)
 }
 
 func (e *Editor) drawStatusBarLine(text string, width, y int, style tcell.Style) {
@@ -560,7 +574,6 @@ func (e *Editor) isSelected(x, y int) bool {
 
 func (e *Editor) quitEditor() {
 	e.logger.Println("Quitting editor")
-	e.status = "Quitting editor. Press any key to return to main menu."
 	e.draw()
 	e.screen.Show()
 	e.screen.PollEvent() // Wait for any key press

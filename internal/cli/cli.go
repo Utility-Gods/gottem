@@ -62,7 +62,7 @@ func startNewChat(app *api.App) {
 		return
 	}
 
-	editor, err := NewEditor(app, chatID, nil)
+	editor, err := NewEditor(app, chatID, title, nil)
 	if err != nil {
 		fmt.Printf("Error creating editor: %v\n", err)
 		return
@@ -97,7 +97,7 @@ func continuePreviousChat(app *api.App) {
 		return
 	}
 
-	editor, err := NewEditor(app, selectedChat.ID, messages)
+	editor, err := NewEditor(app, selectedChat.ID, selectedChat.Title, messages)
 	if err != nil {
 		fmt.Printf("Error creating editor: %v\n", err)
 		return
