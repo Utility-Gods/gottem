@@ -2,7 +2,7 @@ package version
 
 // Version holds the current version of the Gottem application.
 // This is typically updated manually or by a build script before a new release.
-const Version = "1.3.1"
+const Version = "1.4.0"
 
 // Additional version-related information can be added here.
 // For example:
