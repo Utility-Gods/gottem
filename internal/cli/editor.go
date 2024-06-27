@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,6 +58,17 @@ type Editor struct {
 func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message) (*Editor, error) {
 	logDir := filepath.Join("", "logs")
 
+	// Ensure the log directory exists
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	// Clean up old log files
+	if err := cleanupOldLogs(logDir); err != nil {
+		// Log the error, but don't prevent the editor from starting
+		log.Printf("Error cleaning up old logs: %v", err)
+	}
+
 	logFile, err := os.OpenFile(filepath.Join(logDir, fmt.Sprintf("editor_%d.log", time.Now().Unix())),
 		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
@@ -92,6 +104,39 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 	e.loadMessages()
 	e.logger.Println("Editor initialized")
 	return e, nil
+}
+
+func cleanupOldLogs(logDir string) error {
+	files, err := os.ReadDir(logDir)
+	if err != nil {
+		return fmt.Errorf("failed to read log directory: %w", err)
+	}
+
+	var logFiles []os.FileInfo
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "editor_") && strings.HasSuffix(file.Name(), ".log") {
+			info, err := file.Info()
+			if err != nil {
+				return fmt.Errorf("failed to get file info: %w", err)
+			}
+			logFiles = append(logFiles, info)
+		}
+	}
+
+	// Sort files by modification time, newest first
+	sort.Slice(logFiles, func(i, j int) bool {
+		return logFiles[i].ModTime().After(logFiles[j].ModTime())
+	})
+
+	// Keep only the 10 most recent logs
+	for i := 10; i < len(logFiles); i++ {
+		oldFile := filepath.Join(logDir, logFiles[i].Name())
+		if err := os.Remove(oldFile); err != nil {
+			return fmt.Errorf("failed to remove old log file %s: %w", oldFile, err)
+		}
+	}
+
+	return nil
 }
 
 func (e *Editor) loadMessages() {
