@@ -209,26 +209,6 @@ func (e *Editor) handleArrowKeys(key tcell.Key) {
 	}
 }
 
-func (e *Editor) moveCursor(dx, dy int) {
-	newY := e.cursor.y + dy
-	if newY < 0 {
-		newY = 0
-	} else if newY >= len(e.content) {
-		newY = len(e.content) - 1
-	}
-
-	newX := e.cursor.x + dx
-	if newX < 0 {
-		newX = 0
-	} else if newX > len(e.content[newY]) {
-		newX = len(e.content[newY])
-	}
-
-	e.cursor.x = newX
-	e.cursor.y = newY
-	e.adjustScroll()
-}
-
 func (e *Editor) moveCursorToTop() {
 	e.cursor.y = 0
 	e.cursor.x = 0
@@ -509,20 +489,8 @@ func (e *Editor) insertChar(ch rune) {
 	e.logger.Printf("After insertion, cursor at (%d, %d)", e.cursor.x, e.cursor.y)
 }
 
-func (e *Editor) adjustScroll() {
-	e.logger.Printf("Adjusting scroll. Current scroll: %d", e.scroll)
-	_, height := e.screen.Size()
-	contentHeight := height - 4 // Adjust for status bar
-	if e.cursor.y < e.scroll {
-		e.scroll = e.cursor.y
-	} else if e.cursor.y >= e.scroll+contentHeight {
-		e.scroll = e.cursor.y - contentHeight + 1
-	}
-	e.logger.Printf("Scroll adjusted to %d", e.scroll)
-}
-
 func (e *Editor) sendQuery() {
-	query := e.content[len(e.content)-1]
+	query := e.getCurrentLine()
 	apiInfo := e.apis[e.selectedAPI]
 
 	e.logger.Printf("Sending query to API %s: %s", apiInfo.Name, query)
@@ -537,23 +505,106 @@ func (e *Editor) sendQuery() {
 		return
 	}
 
-	newMessage := fmt.Sprintf("[%s] assistant (%s): %s",
+	// Format the response
+	formattedResponse := fmt.Sprintf("\n[%s] assistant (%s):\n%s\n",
 		time.Now().Format("2006-01-02 15:04:05"),
 		apiInfo.Name,
 		response,
 	)
-	e.content = append(e.content, "", newMessage, "")
-	e.cursor.y = len(e.content) - 1
-	e.cursor.x = 0
 
+	// Append the response to the content
+	e.appendText(formattedResponse)
+
+	// Update messages
 	e.messages = append(e.messages,
 		db.Message{Role: "user", APIName: apiInfo.Name, Content: query, CreatedAt: time.Now()},
 		db.Message{Role: "assistant", APIName: apiInfo.Name, Content: response, CreatedAt: time.Now()},
 	)
 
 	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+J to change API."
-	e.adjustScroll()
 	e.logger.Printf("Query sent and response received. Response length: %d", len(response))
+
+	// Redraw the entire editor
+	e.draw()
+}
+
+func (e *Editor) getCurrentLine() string {
+	return e.content[e.cursor.y]
+}
+
+func (e *Editor) appendText(text string) {
+	newLines := strings.Split(text, "\n")
+	e.content = append(e.content, newLines...)
+	e.cursor.y = len(e.content) - 1         // Move cursor to the last line
+	e.cursor.x = len(e.content[e.cursor.y]) // Move cursor to the end of the last line
+	e.adjustScroll()
+}
+
+func (e *Editor) adjustScroll() {
+	_, height := e.screen.Size()
+	contentHeight := height - StatusBarHeight
+
+	// Scroll down if the cursor is below the visible area
+	if e.cursor.y >= e.scroll+contentHeight {
+		e.scroll = e.cursor.y - contentHeight + 1
+	}
+
+	// Scroll up if the cursor is above the visible area
+	if e.cursor.y < e.scroll {
+		e.scroll = e.cursor.y
+	}
+}
+
+func (e *Editor) insertText(text string) {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			// Insert the first line at the current cursor position
+			currentLine := e.content[e.cursor.y]
+			e.content[e.cursor.y] = currentLine[:e.cursor.x] + line + currentLine[e.cursor.x:]
+			e.cursor.x += len(line)
+		} else {
+			// Insert subsequent lines as new lines
+			e.content = append(e.content[:e.cursor.y+i], append([]string{line}, e.content[e.cursor.y+i:]...)...)
+		}
+	}
+	// Move the cursor to the end of the inserted text
+	e.cursor.y += len(lines) - 1
+	if len(lines) > 1 {
+		e.cursor.x = len(lines[len(lines)-1])
+	}
+	e.adjustScroll()
+}
+
+// Update the moveCursor function to handle end of lines better
+func (e *Editor) moveCursor(dx, dy int) {
+	newY := e.cursor.y + dy
+	if newY < 0 {
+		newY = 0
+	} else if newY >= len(e.content) {
+		newY = len(e.content) - 1
+	}
+
+	newX := e.cursor.x + dx
+	if newX < 0 {
+		if newY > 0 {
+			newY--
+			newX = len(e.content[newY])
+		} else {
+			newX = 0
+		}
+	} else if newX > len(e.content[newY]) {
+		if newY < len(e.content)-1 {
+			newY++
+			newX = 0
+		} else {
+			newX = len(e.content[newY])
+		}
+	}
+
+	e.cursor.x = newX
+	e.cursor.y = newY
+	e.adjustScroll()
 }
 
 func (e *Editor) cycleAPI(forward bool) {
