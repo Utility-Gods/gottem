@@ -33,7 +33,7 @@ func APIKeyMenu() {
 	for {
 		prompt := promptui.Select{
 			Label: "API Key Settings",
-			Items: []string{"Set Claude API Key", "Set OpenAI API Key", "Set Other API Key", "Back to Settings"},
+			Items: []string{"Set Claude API Key", "Set OpenAI API Key", "Set Groq API Key", "Back to Settings"},
 		}
 
 		_, result, err := prompt.Run()
@@ -47,8 +47,8 @@ func APIKeyMenu() {
 			setAPIKey("claude")
 		case "Set OpenAI API Key":
 			setAPIKey("openai")
-		case "Set Other API Key":
-			setOtherAPIKey()
+		case "Set Groq API Key":
+			setAPIKey("groq")
 		case "Back to Settings":
 			return
 		}

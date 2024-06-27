@@ -14,32 +14,32 @@ import (
 )
 
 const (
-	claudeAPIURL = "https://api.anthropic.com/v1/messages"
+	groqAPIURL = "https://api.groq.com/openai/v1/chat/completions"
 )
 
-// ClaudeAPI implements the APIHandler interface for Claude API
-type ClaudeAPI struct {
+// GroqAPI implements the APIHandler interface for Groq API
+type GroqAPI struct {
 	apiKey string
 	client *http.Client
 }
 
-// NewClaudeAPI creates a new instance of ClaudeAPI
-func NewClaudeAPI() (*ClaudeAPI, error) {
-	apiKey, err := db.GetAPIKey("claude")
+// NewGroqAPI creates a new instance of GroqAPI
+func NewGroqAPI() (*GroqAPI, error) {
+	apiKey, err := db.GetAPIKey("groq")
 	if err != nil {
-		return nil, fmt.Errorf("error getting Claude API key: %w", err)
+		return nil, fmt.Errorf("error getting Groq API key: %w", err)
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("Claude API key not set. Please run setup")
+		return nil, fmt.Errorf("Groq API key not set. Please run setup")
 	}
 
-	return &ClaudeAPI{
+	return &GroqAPI{
 		apiKey: apiKey,
 		client: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
-func (c *ClaudeAPI) HandleQuery(query string) string {
+func (c *GroqAPI) HandleQuery(query string) string {
 	if c.client == nil {
 		log.Println("HTTP client is nil")
 		return "Error: HTTP client not initialized"
@@ -47,7 +47,7 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 
 	// Create a new spinner
 	s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
-	s.Suffix = " Querying Claude API..."
+	s.Suffix = " Querying Groq API..."
 	s.Start()
 
 	// Defer stopping the spinner
@@ -59,7 +59,6 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"model":      "claude-3-opus-20240229",
 		"max_tokens": 1000,
 		"messages":   messages,
 	})
@@ -68,7 +67,7 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 		return fmt.Sprintf("Error creating request body: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", claudeAPIURL, bytes.NewBuffer(requestBody))
+	req, err := http.NewRequest("POST", groqAPIURL, bytes.NewBuffer(requestBody))
 	if err != nil {
 		log.Printf("Error creating request: %v", err)
 		return fmt.Sprintf("Error creating request: %v", err)
@@ -76,12 +75,11 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Printf("Error making request to Claude API: %v", err)
-		return fmt.Sprintf("Error making request to Claude API: %v", err)
+		log.Printf("Error making request to Groq API: %v", err)
+		return fmt.Sprintf("Error making request to Groq API: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -92,8 +90,8 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error from Claude API: %s", body)
-		return fmt.Sprintf("Error from Claude API: %s", body)
+		log.Printf("Error from Groq API: %s", body)
+		return fmt.Sprintf("Error from Groq API: %s", body)
 	}
 
 	var result map[string]interface{}
@@ -104,20 +102,20 @@ func (c *ClaudeAPI) HandleQuery(query string) string {
 
 	content, ok := result["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		log.Println("Unexpected response format from Claude API")
-		return "Unexpected response format from Claude API"
+		log.Println("Unexpected response format from Groq API")
+		return "Unexpected response format from Groq API"
 	}
 
 	firstContent, ok := content[0].(map[string]interface{})
 	if !ok {
-		log.Println("Unexpected content format from Claude API")
-		return "Unexpected content format from Claude API"
+		log.Println("Unexpected content format from Groq API")
+		return "Unexpected content format from Groq API"
 	}
 
 	text, ok := firstContent["text"].(string)
 	if !ok {
-		log.Println("Unable to extract text from Claude API response")
-		return "Unable to extract text from Claude API response"
+		log.Println("Unable to extract text from Groq API response")
+		return "Unable to extract text from Groq API response"
 	}
 
 	return text

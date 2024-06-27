@@ -26,6 +26,14 @@ func GetAPIHandlers() map[string]types.APIInfo {
 		handlers["o"] = types.APIInfo{Name: "OpenAI API", Shortcut: "o", Handler: openAIAPI}
 	}
 
+	groqAPI, err := NewGroqAPI()
+	if err != nil {
+		log.Printf("Failed to initialize Groq API: %v", err)
+		handlers["g"] = types.APIInfo{Name: "Groq API (Not Configured)", Shortcut: "g", Handler: &ErrorAPI{Err: err}}
+	} else {
+		handlers["g"] = types.APIInfo{Name: "Groq API", Shortcut: "g", Handler: groqAPI}
+	}
+
 	return handlers
 }
 

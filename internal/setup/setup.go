@@ -28,8 +28,8 @@ func RunSetup() error {
 			if err := setAPIKey("openai"); err != nil {
 				return err
 			}
-		case "Set Other API Key":
-			if err := setOtherAPIKey(); err != nil {
+		case "Set Groq API Key":
+			if err := setAPIKey("groq"); err != nil {
 				return err
 			}
 		case "Exit Setup":
