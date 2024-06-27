@@ -7,6 +7,7 @@ BINARY_NAME="gottem"
 CURRENT_VERSION=$(cat VERSION || echo "0.0.0")
 VERSION_FILE="VERSION"
 PLATFORMS=("windows/amd64" "darwin/amd64" "linux/amd64")
+GITHUB_REPO="Utility-Gods/gottem"  # Replace with your GitHub username/repo
 
 # Function to increment version
 increment_version() {
@@ -41,16 +42,24 @@ increment_version() {
 }
 
 # Check if release type is provided
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 <major|minor|patch>"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <major|minor|patch> [changelog]"
     exit 1
 fi
 
 RELEASE_TYPE=$1
 NEW_VERSION=$(increment_version $CURRENT_VERSION $RELEASE_TYPE)
 
+# Get changelog
+if [ $# -ge 2 ]; then
+    CHANGELOG="${@:2}"
+else
+    CHANGELOG="Release version $NEW_VERSION"
+fi
+
 echo "Current version: $CURRENT_VERSION"
 echo "New version: $NEW_VERSION"
+echo "Changelog: $CHANGELOG"
 echo -n "Do you want to proceed with the release? (y/n): "
 read confirm
 
@@ -62,18 +71,23 @@ fi
 # Update VERSION file
 echo $NEW_VERSION > $VERSION_FILE
 
-# Update version in code (assuming you have a version.go file)
+# Update version in code
 sed -i '' "s/const Version = \".*\"/const Version = \"$NEW_VERSION\"/" version.go
-# sed -i '' "s/const Version = .*/const Version = \"$NEW_VERSION\"/" version.go
 
 # Commit version update
 git add $VERSION_FILE version.go
-git commit -m "Bump version to $NEW_VERSION"
-git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION"
+git commit -m "Bump version to $NEW_VERSION
 
-# Create release directory
-RELEASE_DIR="release/gottem_v${NEW_VERSION}"
-mkdir -p $RELEASE_DIR
+Changelog:
+$CHANGELOG"
+git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION
+
+Changelog:
+$CHANGELOG"
+
+# Create temporary release directory
+RELEASE_DIR=$(mktemp -d)
+echo "Created temporary directory: $RELEASE_DIR"
 
 # Build for each platform
 for platform in "${PLATFORMS[@]}"; do
@@ -109,7 +123,7 @@ For more information, visit: [Your project URL]
 
 ## Changelog
 
-[Add your changelog here]
+$CHANGELOG
 
 EOF
 
@@ -130,19 +144,67 @@ echo Gottem v${NEW_VERSION} installed successfully!
 EOF
 
 # Create zip archive
-(cd release && zip -r gottem_v${NEW_VERSION}.zip gottem_v${NEW_VERSION})
+ZIP_FILE="gottem_v${NEW_VERSION}.zip"
+(cd $RELEASE_DIR && zip -r ../$ZIP_FILE .)
 
 echo "Release v${NEW_VERSION} created successfully!"
-echo "Release archive: release/gottem_v${NEW_VERSION}.zip"
+echo "Release archive: $ZIP_FILE"
 
-# Optionally push to remote
-echo -n "Do you want to push this release to remote? (y/n): "
+# Clean up
+rm -rf $RELEASE_DIR
+
+# Push to remote
+echo -n "Do you want to push this release to remote and create a GitHub release? (y/n): "
 read push_confirm
 
 if [ "$push_confirm" = "y" ]; then
     git push origin main
     git push origin v$NEW_VERSION
-    echo "Changes pushed to remote."
+
+    # Create GitHub release
+    echo -n "Enter your GitHub personal access token: "
+    read -s GITHUB_TOKEN
+    echo
+
+    # Create release
+    release_response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+         --data @- \
+         "https://api.github.com/repos/$GITHUB_REPO/releases" << EOF
+{
+  "tag_name": "v$NEW_VERSION",
+  "target_commitish": "main",
+  "name": "v$NEW_VERSION",
+  "body": "$CHANGELOG",
+  "draft": false,
+  "prerelease": false
+}
+EOF
+)
+
+    # Extract release ID from response using string manipulation
+    release_id=$(echo "$release_response" | grep -o '"id": [0-9]*' | head -1 | awk '{print $2}')
+
+    if [ -n "$release_id" ]; then
+        echo "GitHub release created successfully."
+
+        # Upload asset
+        upload_response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+             -H "Content-Type: application/zip" \
+             --data-binary @"$ZIP_FILE" \
+             "https://uploads.github.com/repos/$GITHUB_REPO/releases/$release_id/assets?name=$ZIP_FILE")
+
+        if echo "$upload_response" | grep -q '"state": "uploaded"'; then
+            echo "Release asset uploaded successfully."
+        else
+            echo "Failed to upload release asset. Please check and try again."
+        fi
+    else
+        echo "Failed to create GitHub release. Please check your token and try again."
+        echo "API Response: $release_response"
+    fi
+
+    echo "Changes pushed to remote and GitHub release created."
 else
     echo "Remember to push your changes and tags to remote."
+    echo "Also, don't forget to manually create a release on GitHub and upload $ZIP_FILE."
 fi
