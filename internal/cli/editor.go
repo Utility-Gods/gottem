@@ -21,6 +21,7 @@ const (
 	VisualMode
 	InsertMode
 	APISelectMode
+	QuitMode
 )
 
 const (
@@ -143,6 +144,8 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 		return e.handleInsertModeKey(ev)
 	case APISelectMode:
 		return e.handleAPISelectModeKey(ev)
+	case QuitMode:
+		return e.handleQuitModeKey(ev)
 	}
 
 	return false
@@ -150,17 +153,15 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 
 func (e *Editor) handleNormalModeKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
-	case tcell.KeyCtrlQ:
-		e.logger.Println("Quit command received")
-
-		e.quitEditor()
-		return true
 	case tcell.KeyCtrlE:
 		e.logger.Println("Send query command received")
 		e.sendQuery()
 	case tcell.KeyCtrlJ:
 		e.logger.Println("Select API command received")
 		e.selectAPI()
+	case tcell.KeyCtrlQ:
+		e.logger.Println("Quit command received")
+		e.enterQuitMode()
 	case tcell.KeyRune:
 		switch ev.Rune() {
 		case 'v':
@@ -236,16 +237,38 @@ func (e *Editor) handleAPISelectModeKey(ev *tcell.EventKey) bool {
 	return false
 }
 
+// Implement the handleQuitModeKey function
+func (e *Editor) handleQuitModeKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyRune:
+		switch ev.Rune() {
+		case 'y', 'Y':
+			e.quitEditor()
+			return true
+		case 'n', 'N':
+			e.mode = NormalMode
+			e.status = "Quit cancelled"
+		}
+	case tcell.KeyEscape:
+		e.mode = NormalMode
+		e.status = "Quit cancelled"
+	}
+	e.draw()
+	return false
+}
+
 func (e *Editor) getModeColor() tcell.Color {
 	switch e.mode {
 	case NormalMode:
-		return tcell.ColorRed
+		return tcell.ColorOrangeRed
 	case InsertMode:
 		return tcell.ColorGreen
 	case VisualMode:
 		return tcell.ColorBlue
 	case APISelectMode:
 		return tcell.ColorYellow
+	case QuitMode:
+		return tcell.ColorRed
 	default:
 		return tcell.ColorWhite
 	}
@@ -296,6 +319,8 @@ func (e *Editor) getModeInfo() string {
 		return "VISUAL MODE | h/j/k/l: Extend selection, y: Yank, d: Delete"
 	case APISelectMode:
 		return "API SELECT MODE | ←/→: Change API, Enter: Confirm, Esc: Cancel"
+	case QuitMode:
+		return "QUIT MODE | y: Quit, n: Cancel"
 	default:
 		return "UNKNOWN MODE"
 	}
@@ -311,6 +336,8 @@ func (e *Editor) getModeInstructions() string {
 		return "Esc: Exit Visual Mode"
 	case APISelectMode:
 		return "Esc: Exit API Select Mode"
+	case QuitMode:
+		return "y: Quit, n: Cancel"
 	default:
 		return ""
 	}
@@ -364,6 +391,8 @@ func (e *Editor) getModeString() string {
 		return "Insert"
 	case APISelectMode:
 		return "API Select"
+	case QuitMode:
+		return "Quit"
 	default:
 		return "Unknown"
 	}
@@ -521,6 +550,18 @@ func (e *Editor) selectAPI() {
 	e.draw()
 }
 
+func (e *Editor) enterQuitMode() {
+	e.logger.Println("Entering Quit mode")
+	e.mode = QuitMode
+	e.draw()
+}
+
+func (e *Editor) exitQuitMode() {
+	e.logger.Println("Exiting Quit mode")
+	e.mode = NormalMode
+	e.draw()
+}
+
 func (e *Editor) yankSelection() {
 	// TODO: Implement clipboard functionality
 	e.exitVisualMode()
@@ -576,5 +617,5 @@ func (e *Editor) quitEditor() {
 	e.logger.Println("Quitting editor")
 	e.draw()
 	e.screen.Show()
-	e.screen.PollEvent() // Wait for any key press
+	e.screen.Fini()
 }
