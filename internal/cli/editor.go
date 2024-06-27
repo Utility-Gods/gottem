@@ -41,8 +41,7 @@ type Editor struct {
 	screen      tcell.Screen
 	app         *api.App
 	chatID      int
-	messages    []db.Message
-	content     []string
+	isDirty     bool
 	cursor      Cursor
 	scroll      int
 	status      string
@@ -53,9 +52,11 @@ type Editor struct {
 	selection   Selection
 	chatTitle   string
 	lastKey     rune
+	chat        db.Chat
+	content     []string
 }
 
-func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message) (*Editor, error) {
+func NewEditor(app *api.App, chatID int, chatTitle string) (*Editor, error) {
 	logDir := filepath.Join("", "logs")
 
 	// Ensure the log directory exists
@@ -87,12 +88,17 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		return nil, err
 	}
 
+	chat, err := db.GetChat(chatID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chat: %w", err)
+	}
+
 	e := &Editor{
 		screen:      screen,
 		app:         app,
 		chatID:      chatID,
-		messages:    messages,
-		content:     []string{""},
+		isDirty:     false,
+		content:     strings.Split(chat.Context, "\n"),
 		cursor:      Cursor{x: 0, y: 0},
 		apis:        app.GetAvailableAPIs(),
 		selectedAPI: 0,
@@ -100,8 +106,19 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		mode:        NormalMode,
 		selection:   Selection{start: Cursor{x: 0, y: 0}, end: Cursor{x: 0, y: 0}},
 		chatTitle:   chatTitle,
+		chat:        chat,
 	}
-	e.loadMessages()
+
+	// Set default API to the first one with a key set
+	if err := e.setDefaultAPI(); err != nil {
+		return nil, fmt.Errorf("failed to set default API: %w", err)
+	}
+
+	// If there's no content, add an empty line to start with
+	if len(e.content) == 0 {
+		e.content = append(e.content, "")
+	}
+
 	e.logger.Println("Editor initialized")
 	return e, nil
 }
@@ -139,24 +156,42 @@ func cleanupOldLogs(logDir string) error {
 	return nil
 }
 
-func (e *Editor) loadMessages() {
-	e.logger.Println("Loading messages")
-	for _, msg := range e.messages {
-		e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
-			msg.CreatedAt.Format("2006-01-02 15:04:05"),
-			msg.Role,
-			msg.APIName,
-			msg.Content,
-		))
-		e.content = append(e.content, "")
+func (e *Editor) setDefaultAPI() error {
+	apiKeys, err := db.GetAllAPIKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get API keys: %w", err)
 	}
-	e.logger.Printf("Loaded %d messages", len(e.messages))
+
+	// Create a map for easier lookup
+	apiKeyMap := make(map[string]string)
+	for _, key := range apiKeys {
+		apiKeyMap[key.APIName] = key.APIKey
+	}
+
+	for i, api := range e.apis {
+		if _, ok := apiKeyMap[api.Name]; ok {
+			e.selectedAPI = i
+			log.Printf("Default API set to: %s", api.Name)
+			return nil
+		}
+	}
+
+	log.Println("No API key found, using the first API as default")
+	return nil
+}
+
+func (e *Editor) saveContext() error {
+	context := strings.Join(e.content, "\n")
+	return db.UpdateChatContext(e.chat.ID, context)
 }
 
 func (e *Editor) Run() error {
-	defer e.screen.Fini()
-	e.logger.Println("Editor running")
-
+	defer func() {
+		if err := e.saveContext(); err != nil {
+			e.logger.Printf("Error saving chat context: %v", err)
+		}
+		e.screen.Fini()
+	}()
 	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 
 	for {
@@ -164,7 +199,6 @@ func (e *Editor) Run() error {
 		e.screen.Show()
 
 		ev := e.screen.PollEvent()
-		e.logger.Printf("Event received: %T", ev)
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 			if e.handleKeyEvent(ev) {
@@ -180,6 +214,12 @@ func (e *Editor) Run() error {
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	e.logger.Printf("Key event: key=%v rune=%v mod=%v", ev.Key(), ev.Rune(), ev.Modifiers())
+
+	// Handle Ctrl+E (send query) in any mode
+	if ev.Key() == tcell.KeyCtrlE {
+		e.sendQuery()
+		return false
+	}
 
 	switch e.mode {
 	case NormalMode:
@@ -535,7 +575,7 @@ func (e *Editor) insertChar(ch rune) {
 }
 
 func (e *Editor) sendQuery() {
-	query := e.getCurrentLine()
+	query := e.getLastParagraph()
 	apiInfo := e.apis[e.selectedAPI]
 
 	e.logger.Printf("Sending query to API %s: %s", apiInfo.Name, query)
@@ -543,42 +583,51 @@ func (e *Editor) sendQuery() {
 	e.draw()
 	e.screen.Show()
 
-	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chatID, e.messages)
+	response, err := e.app.HandleQuery(apiInfo.Shortcut, query, e.chat.ID, strings.Join(e.content, "\n"))
 	if err != nil {
-		// Handle the error by displaying it in the status bar and logging it
-		errorMsg := fmt.Sprintf("Error from API: %v", err)
-		e.status = errorMsg
+		e.status = fmt.Sprintf("Error: %v", err)
 		e.logger.Printf("Error sending query: %v", err)
-		e.draw()
 		return
 	}
 
-	// Format the response
-	formattedResponse := fmt.Sprintf("\n[%s] assistant (%s):\n%s\n",
-		time.Now().Format("2006-01-02 15:04:05"),
-		apiInfo.Name,
-		response,
-	)
+	// Append the query and response to the content
+	e.appendText(fmt.Sprintf("Assistant: %s\n", response))
 
-	// Append the response to the content
-	e.appendText(formattedResponse)
-
-	// Update messages (only if the query was successful)
-	e.messages = append(e.messages,
-		db.Message{Role: "user", APIName: apiInfo.Name, Content: query, CreatedAt: time.Now()},
-		db.Message{Role: "assistant", APIName: apiInfo.Name, Content: response, CreatedAt: time.Now()},
-	)
-
+	e.isDirty = true
 	e.status = "Query sent and response received. Ctrl+E to send another, Ctrl+J to change API."
 	e.logger.Printf("Query sent and response received. Response length: %d", len(response))
 
-	// Redraw the entire editor
 	e.draw()
 }
 
-func (e *Editor) getCurrentLine() string {
-	if e.cursor.y < len(e.content) {
-		return e.content[e.cursor.y]
+func (e *Editor) isTextSelected() bool {
+	return e.mode == VisualMode && (e.selection.start != e.selection.end)
+}
+
+func (e *Editor) getSelectedText() string {
+	start, end := e.selection.start, e.selection.end
+	if start.y > end.y || (start.y == end.y && start.x > end.x) {
+		start, end = end, start
+	}
+
+	if start.y == end.y {
+		return e.content[start.y][start.x:end.x]
+	}
+
+	text := e.content[start.y][start.x:]
+	for y := start.y + 1; y < end.y; y++ {
+		text += "\n" + e.content[y]
+	}
+	text += "\n" + e.content[end.y][:end.x]
+
+	return text
+}
+
+func (e *Editor) getLastParagraph() string {
+	for i := len(e.content) - 1; i >= 0; i-- {
+		if strings.TrimSpace(e.content[i]) != "" {
+			return strings.TrimSpace(e.content[i])
+		}
 	}
 	return ""
 }
@@ -586,9 +635,17 @@ func (e *Editor) getCurrentLine() string {
 func (e *Editor) appendText(text string) {
 	newLines := strings.Split(text, "\n")
 	e.content = append(e.content, newLines...)
-	e.cursor.y = len(e.content) - 1         // Move cursor to the last line
-	e.cursor.x = len(e.content[e.cursor.y]) // Move cursor to the end of the last line
+	e.cursor.y = len(e.content) - 1
+	e.cursor.x = len(e.content[e.cursor.y])
 	e.adjustScroll()
+	e.isDirty = true
+}
+
+func (e *Editor) getCurrentLine() string {
+	if e.cursor.y < len(e.content) {
+		return e.content[e.cursor.y]
+	}
+	return ""
 }
 
 func (e *Editor) adjustScroll() {
@@ -761,7 +818,20 @@ func (e *Editor) isSelected(x, y int) bool {
 
 func (e *Editor) quitEditor() {
 	e.logger.Println("Quitting editor")
-	e.draw()
-	e.screen.Show()
+
+	if e.isDirty {
+		if err := e.saveContext(); err != nil {
+			e.logger.Printf("Error saving chat context: %v", err)
+			e.status = fmt.Sprintf("Error saving chat: %v", err)
+			e.draw()
+			e.screen.Show()
+			time.Sleep(2 * time.Second) // Give user time to see the error message
+		} else {
+			e.logger.Println("Chat context saved successfully")
+		}
+	}
+
+	e.screen.Clear()
+	e.screen.Sync()
 	e.screen.Fini()
 }

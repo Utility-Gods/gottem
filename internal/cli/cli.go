@@ -19,8 +19,6 @@ func RunCLI(app *api.App) {
 			startNewChat(app)
 		case "Continue a previous chat":
 			continuePreviousChat(app)
-		case "View chat history":
-			viewChatHistory()
 		case "Exit":
 			fmt.Println("Goodbye!")
 			return
@@ -31,7 +29,7 @@ func RunCLI(app *api.App) {
 func displayMainMenu() string {
 	prompt := promptui.Select{
 		Label: "Select an option",
-		Items: []string{"Start a new chat", "Continue a previous chat", "View chat history", "Exit"},
+		Items: []string{"Start a new chat", "Continue a previous chat", "Exit"},
 	}
 
 	_, result, err := prompt.Run()
@@ -60,7 +58,7 @@ func startNewChat(app *api.App) {
 		return
 	}
 
-	editor, err := NewEditor(app, chatID, title, nil)
+	editor, err := NewEditor(app, chatID, title)
 	if err != nil {
 		fmt.Printf("Error creating editor: %v\n", err)
 		return
@@ -89,13 +87,7 @@ func continuePreviousChat(app *api.App) {
 		return
 	}
 
-	messages, err := db.GetChatMessages(selectedChat.ID)
-	if err != nil {
-		fmt.Printf("Error retrieving messages: %v\n", err)
-		return
-	}
-
-	editor, err := NewEditor(app, selectedChat.ID, selectedChat.Title, messages)
+	editor, err := NewEditor(app, selectedChat.ID, selectedChat.Title)
 	if err != nil {
 		fmt.Printf("Error creating editor: %v\n", err)
 		return
@@ -124,21 +116,8 @@ func viewChatHistory() {
 		return
 	}
 
-	messages, err := db.GetChatMessages(selectedChat.ID)
-	if err != nil {
-		fmt.Printf("Error retrieving messages: %v\n", err)
-		return
-	}
-
 	fmt.Printf("\n--- Chat History for '%s' ---\n", selectedChat.Title)
-	for _, msg := range messages {
-		fmt.Printf("[%s] %s (%s): %s\n\n",
-			msg.CreatedAt.Format("2006-01-02 15:04:05"),
-			msg.Role,
-			msg.APIName,
-			msg.Content,
-		)
-	}
+	fmt.Println(selectedChat.Context)
 	fmt.Println("--- End of Chat History ---")
 
 	prompt := promptui.Prompt{

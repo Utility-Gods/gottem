@@ -3,24 +3,41 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-type Message struct {
+var db *sql.DB
+
+type Chat struct {
 	ID        int
-	ChatID    int
-	Role      string
-	APIName   string
-	Content   string
+	Title     string
+	Context   string
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-var db *sql.DB
+func createTables() error {
+	schemaPath := filepath.Join("internal", "db", "schema.sql")
+	schemaContent, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("error reading schema file: %w", err)
+	}
+
+	_, err = db.Exec(string(schemaContent))
+	if err != nil {
+		return fmt.Errorf("error executing schema: %w", err)
+	}
+
+	log.Println("Database schema created successfully")
+	return nil
+}
 
 func InitDB() error {
 	homeDir, err := os.UserHomeDir()
@@ -47,22 +64,6 @@ func InitDB() error {
 	}
 
 	log.Println("Database initialized successfully")
-	return nil
-}
-
-func createTables() error {
-	schemaPath := filepath.Join("internal", "db", "schema.sql")
-	schemaContent, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return fmt.Errorf("error reading schema file: %w", err)
-	}
-
-	_, err = db.Exec(string(schemaContent))
-	if err != nil {
-		return fmt.Errorf("error executing schema: %w", err)
-	}
-
-	log.Println("Database schema created successfully")
 	return nil
 }
 
@@ -171,17 +172,42 @@ func GetAllAPIKeys() ([]struct {
 	return apiKeys, nil
 }
 
-func CreateChat(title string) (int, error) {
-	query := `INSERT INTO chats (title) VALUES (?);`
-	result, err := db.Exec(query, title)
+func DeleteAPIKey(apiName string) error {
+	query := `DELETE FROM api_keys WHERE api_name = ?;`
+	_, err := db.Exec(query, apiName)
 	if err != nil {
-		log.Printf("Error creating chat: %v", err)
-		return 0, err
+		log.Printf("Error deleting API key for %s: %v", apiName, err)
+		return err
+	}
+	log.Printf("API key for %s deleted successfully", apiName)
+	return nil
+}
+
+func GetChat(chatID int) (Chat, error) {
+	query := `SELECT id, title, context, created_at, updated_at FROM chats WHERE id = ?;`
+	var chat Chat
+	err := db.QueryRow(query, chatID).Scan(
+		&chat.ID,
+		&chat.Title,
+		&chat.Context,
+		&chat.CreatedAt,
+		&chat.UpdatedAt,
+	)
+	if err != nil {
+		return Chat{}, fmt.Errorf("failed to get chat: %w", err)
+	}
+	return chat, nil
+}
+
+func CreateChat(title string) (int, error) {
+	query := `INSERT INTO chats (title, context) VALUES (?, ?);`
+	result, err := db.Exec(query, title, "")
+	if err != nil {
+		return 0, fmt.Errorf("failed to create chat: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		log.Printf("Error getting last insert ID: %v", err)
-		return 0, err
+		return 0, fmt.Errorf("failed to get last insert ID: %w", err)
 	}
 	return int(id), nil
 }
@@ -194,13 +220,6 @@ func AddMessage(chatID int, role, apiName, content string) error {
 		return err
 	}
 	return nil
-}
-
-type Chat struct {
-	ID        int
-	Title     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 func GetChats() ([]Chat, error) {
@@ -226,30 +245,23 @@ func GetChats() ([]Chat, error) {
 	return chats, nil
 }
 
-func GetChatMessages(chatID int) ([]Message, error) {
-	query := `SELECT id, chat_id, role, api_name, content, created_at
-              FROM messages
-              WHERE chat_id = ?
-              ORDER BY created_at ASC;`
-	rows, err := db.Query(query, chatID)
+func UpdateChatTitle(chatID int, newTitle string) error {
+	query := `UPDATE chats SET title = ? WHERE id = ?;`
+	_, err := db.Exec(query, newTitle, chatID)
 	if err != nil {
-		log.Printf("Error querying messages: %v", err)
-		return nil, err
+		return fmt.Errorf("failed to update chat title: %w", err)
 	}
-	defer rows.Close()
+	return nil
+}
 
-	var messages []Message
-	for rows.Next() {
-		var msg Message
-		err := rows.Scan(&msg.ID, &msg.ChatID, &msg.Role, &msg.APIName, &msg.Content, &msg.CreatedAt)
-		if err != nil {
-			log.Printf("Error scanning message row: %v", err)
-			return nil, err
-		}
-		messages = append(messages, msg)
+func DeleteChat(chatID int) error {
+	query := `DELETE FROM chats WHERE id = ?;`
+	_, err := db.Exec(query, chatID)
+	if err != nil {
+		log.Printf("Error deleting chat: %v", err)
+		return err
 	}
-
-	return messages, nil
+	return nil
 }
 
 func CloseDB() {
@@ -262,14 +274,12 @@ func CloseDB() {
 	}
 }
 
-func DeleteAPIKey(apiName string) error {
-	query := `DELETE FROM api_keys WHERE api_name = ?;`
-	_, err := db.Exec(query, apiName)
+func UpdateChatContext(chatID int, context string) error {
+	query := `UPDATE chats SET context = ? WHERE id = ?;`
+	_, err := db.Exec(query, context, chatID)
 	if err != nil {
-		log.Printf("Error deleting API key for %s: %v", apiName, err)
-		return err
+		return fmt.Errorf("failed to update chat context: %w", err)
 	}
-	log.Printf("API key for %s deleted successfully", apiName)
 	return nil
 }
 
@@ -284,7 +294,7 @@ func FlushDB() error {
 	defer tx.Rollback()
 
 	// List of tables to clear
-	tables := []string{"api_keys", "chats", "messages"}
+	tables := []string{"api_keys", "chats"}
 
 	// Disable foreign key constraints temporarily
 	_, err = tx.Exec("PRAGMA foreign_keys = OFF;")
@@ -319,5 +329,72 @@ func FlushDB() error {
 	}
 
 	log.Println("Database flushed successfully")
+	return nil
+}
+
+func MigrateDatabase() error {
+	// Check current schema version
+	var version int
+	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check schema version: %w", err)
+	}
+
+	// If version is 0 or schema_version table doesn't exist, we assume it's a new database or very old version
+	if err == sql.ErrNoRows || version < 1 {
+		return migrateToVersion1()
+	}
+
+	// For future migrations, add more conditions here
+	// if version < 2 {
+	//     return migrateToVersion2()
+	// }
+
+	log.Println("Database schema is up to date")
+	return nil
+}
+
+func migrateToVersion1() error {
+	log.Println("Migrating database to version 1")
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Read the schema.sql file
+	schemaPath := filepath.Join("internal", "db", "schema.sql") // Adjust this path as necessary
+	schemaSQL, err := ioutil.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("error reading schema file: %w", err)
+	}
+
+	// Split the schema into individual statements
+	statements := strings.Split(string(schemaSQL), ";")
+
+	// Execute each statement
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err = tx.Exec(stmt)
+		if err != nil {
+			return fmt.Errorf("error executing schema statement: %w", err)
+		}
+	}
+
+	// Ensure the schema version is set to 1
+	_, err = tx.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (1)")
+	if err != nil {
+		return fmt.Errorf("failed to update schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Println("Migration to version 1 completed successfully")
 	return nil
 }
