@@ -42,6 +42,7 @@ type Editor struct {
 	app         *api.App
 	chatID      int
 	messages    []db.Message
+	isDirty     bool
 	content     []string
 	cursor      Cursor
 	scroll      int
@@ -98,6 +99,7 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		app:         app,
 		chatID:      chatID,
 		messages:    messages,
+		isDirty:     false,
 		content:     []string{""},
 		cursor:      Cursor{x: 0, y: 0},
 		apis:        app.GetAvailableAPIs(),
@@ -108,7 +110,7 @@ func NewEditor(app *api.App, chatID int, chatTitle string, messages []db.Message
 		chatTitle:   chatTitle,
 		chat:        chat,
 	}
-	e.loadMessages()
+	e.loadMessagesFromDB()
 	e.logger.Println("Editor initialized")
 	return e, nil
 }
@@ -146,8 +148,14 @@ func cleanupOldLogs(logDir string) error {
 	return nil
 }
 
-func (e *Editor) loadMessages() {
-	e.logger.Println("Loading messages")
+func (e *Editor) loadMessagesFromDB() error {
+	messages, err := db.GetChatMessages(e.chatID)
+	if err != nil {
+		return fmt.Errorf("failed to get chat messages: %w", err)
+	}
+
+	e.messages = messages
+	e.content = []string{""}
 	for _, msg := range e.messages {
 		e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
 			msg.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -157,12 +165,19 @@ func (e *Editor) loadMessages() {
 		))
 		e.content = append(e.content, "")
 	}
-	e.logger.Printf("Loaded %d messages", len(e.messages))
+
+	return nil
 }
 
 func (e *Editor) Run() error {
-	defer e.screen.Fini()
-	e.logger.Println("Editor running")
+	defer func() {
+		if e.isDirty {
+			if err := e.saveMessagesToDB(); err != nil {
+				e.logger.Printf("Error saving messages to DB: %v", err)
+			}
+		}
+		e.screen.Fini()
+	}()
 
 	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 
@@ -183,6 +198,21 @@ func (e *Editor) Run() error {
 			e.logger.Println("Screen resized")
 		}
 	}
+}
+
+func (e *Editor) saveMessagesToDB() error {
+	if err := db.DeleteChatMessages(e.chatID); err != nil {
+		return fmt.Errorf("failed to delete existing messages: %w", err)
+	}
+
+	for _, msg := range e.messages {
+		if err := db.AddMessage(e.chatID, msg.Role, msg.APIName, msg.Content); err != nil {
+			return fmt.Errorf("failed to add message: %w", err)
+		}
+	}
+
+	e.isDirty = false
+	return nil
 }
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
@@ -546,6 +576,7 @@ func (e *Editor) insertChar(ch rune) {
 	e.cursor.x++
 	e.logger.Printf("After insertion, cursor at (%d, %d)", e.cursor.x, e.cursor.y)
 }
+
 func (e *Editor) sendQuery() {
 	var query string
 	if e.isTextSelected() {
@@ -568,10 +599,9 @@ func (e *Editor) sendQuery() {
 		return
 	}
 
-	// Append the response to the content
-	e.appendText(fmt.Sprintf("\n\nAssistant: %s\n", response))
+	e.appendMessage("user", apiInfo.Name, query)
+	e.appendMessage("assistant", apiInfo.Name, response)
 
-	// Update the chat context in the database
 	newContext := strings.Join(e.content, "\n")
 	if err := db.UpdateChatContext(e.chat.ID, newContext); err != nil {
 		e.logger.Printf("Error updating chat context: %v", err)
@@ -628,6 +658,26 @@ func (e *Editor) getCurrentLine() string {
 		return e.content[e.cursor.y]
 	}
 	return ""
+}
+
+func (e *Editor) appendMessage(role, apiName, content string) {
+	message := db.Message{
+		ChatID:    e.chatID,
+		Role:      role,
+		APIName:   apiName,
+		Content:   content,
+		CreatedAt: time.Now(),
+	}
+	e.messages = append(e.messages, message)
+	e.isDirty = true
+
+	e.content = append(e.content, fmt.Sprintf("[%s] %s (%s): %s",
+		message.CreatedAt.Format("2006-01-02 15:04:05"),
+		message.Role,
+		message.APIName,
+		message.Content,
+	))
+	e.content = append(e.content, "")
 }
 
 func (e *Editor) adjustScroll() {

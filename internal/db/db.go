@@ -385,6 +385,16 @@ func FlushDB() error {
 	return nil
 }
 
+func DeleteChatMessages(chatID int) error {
+	query := `DELETE FROM messages WHERE chat_id = ?;`
+	_, err := db.Exec(query, chatID)
+	if err != nil {
+		log.Printf("Error deleting messages for chat ID %d: %v", chatID, err)
+		return fmt.Errorf("failed to delete messages for chat ID %d: %w", chatID, err)
+	}
+	return nil
+}
+
 func MigrateDatabase() error {
 	// Check if the context column exists in the chats table
 	var contextExists bool
