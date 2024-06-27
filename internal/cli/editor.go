@@ -199,14 +199,70 @@ func (e *Editor) Run() error {
 }
 
 func (e *Editor) saveMessagesToDB() error {
+	// First, delete all existing messages for this chat
 	if err := db.DeleteChatMessages(e.chatID); err != nil {
 		return fmt.Errorf("failed to delete existing messages: %w", err)
 	}
 
-	for _, msg := range e.messages {
+	// Parse the content in the editor's buffer to extract messages
+	var messages []db.Message
+	var currentMessage strings.Builder
+	var currentRole, currentAPIName string
+	var currentTime time.Time
+
+	for _, line := range e.content {
+		if strings.HasPrefix(line, "[") && strings.Contains(line, "]") {
+			// If we have a previous message, add it to the messages slice
+			if currentMessage.Len() > 0 {
+				messages = append(messages, db.Message{
+					ChatID:    e.chatID,
+					Role:      currentRole,
+					APIName:   currentAPIName,
+					Content:   strings.TrimSpace(currentMessage.String()),
+					CreatedAt: currentTime,
+				})
+				currentMessage.Reset()
+			}
+
+			// Parse the new message header
+			parts := strings.SplitN(line, "]", 2)
+			if len(parts) == 2 {
+				timeStr := strings.Trim(parts[0], "[]")
+				currentTime, _ = time.Parse("2006-01-02 15:04:05", timeStr)
+
+				roleParts := strings.SplitN(strings.TrimSpace(parts[1]), "(", 2)
+				if len(roleParts) == 2 {
+					currentRole = strings.TrimSpace(roleParts[0])
+					currentAPIName = strings.Trim(roleParts[1], ")")
+				}
+			}
+		} else {
+			currentMessage.WriteString(line + "\n")
+		}
+	}
+
+	// Add the last message if there is one
+	if currentMessage.Len() > 0 {
+		messages = append(messages, db.Message{
+			ChatID:    e.chatID,
+			Role:      currentRole,
+			APIName:   currentAPIName,
+			Content:   strings.TrimSpace(currentMessage.String()),
+			CreatedAt: currentTime,
+		})
+	}
+
+	// Insert the parsed messages into the database
+	for _, msg := range messages {
 		if err := db.AddMessage(e.chatID, msg.Role, msg.APIName, msg.Content); err != nil {
 			return fmt.Errorf("failed to add message: %w", err)
 		}
+	}
+
+	// Update the chat context
+	newContext := strings.Join(e.content, "\n")
+	if err := db.UpdateChatContext(e.chatID, newContext); err != nil {
+		return fmt.Errorf("failed to update chat context: %w", err)
 	}
 
 	e.isDirty = false
@@ -867,14 +923,3 @@ func (e *Editor) quitEditor() {
 	e.screen.Sync()
 	e.screen.Fini()
 }
-
-// // Add this function to db.go
-// func UpdateChatLastModified(chatID int) error {
-// 	query := `UPDATE chats SET updated_at = CURRENT_TIMESTAMP WHERE id = ?;`
-// 	_, err := db.Exec(query, chatID)
-// 	if err != nil {
-// 		log.Printf("Error updating last modified time for chat ID %d: %v", chatID, err)
-// 		return fmt.Errorf("failed to update last modified time for chat ID %d: %w", chatID, err)
-// 	}
-// 	return nil
-// }
