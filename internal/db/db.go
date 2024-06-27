@@ -272,3 +272,52 @@ func DeleteAPIKey(apiName string) error {
 	log.Printf("API key for %s deleted successfully", apiName)
 	return nil
 }
+
+func FlushDB() error {
+	// Start a transaction to ensure all operations are atomic
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("error starting transaction: %w", err)
+	}
+
+	// Defer a rollback in case anything fails
+	defer tx.Rollback()
+
+	// List of tables to clear
+	tables := []string{"api_keys", "chats", "messages"}
+
+	// Disable foreign key constraints temporarily
+	_, err = tx.Exec("PRAGMA foreign_keys = OFF;")
+	if err != nil {
+		return fmt.Errorf("error disabling foreign key constraints: %w", err)
+	}
+
+	// Clear each table
+	for _, table := range tables {
+		_, err := tx.Exec(fmt.Sprintf("DELETE FROM %s;", table))
+		if err != nil {
+			return fmt.Errorf("error clearing table %s: %w", table, err)
+		}
+
+		// Reset the auto-increment counter for tables with INTEGER PRIMARY KEY
+		_, err = tx.Exec(fmt.Sprintf("DELETE FROM sqlite_sequence WHERE name='%s';", table))
+		if err != nil {
+			return fmt.Errorf("error resetting auto-increment for table %s: %w", table, err)
+		}
+	}
+
+	// Re-enable foreign key constraints
+	_, err = tx.Exec("PRAGMA foreign_keys = ON;")
+	if err != nil {
+		return fmt.Errorf("error re-enabling foreign key constraints: %w", err)
+	}
+
+	// Commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("error committing transaction: %w", err)
+	}
+
+	log.Println("Database flushed successfully")
+	return nil
+}

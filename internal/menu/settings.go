@@ -12,7 +12,7 @@ func SettingsMenu() {
 	for {
 		prompt := promptui.Select{
 			Label: "Settings Menu",
-			Items: []string{"API Keys", "View API Keys", "Delete API Key", "Back to Main Menu"},
+			Items: []string{"API Keys", "View API Keys", "Delete API Key", "Flush DB", "Back to Main Menu"},
 		}
 
 		_, result, err := prompt.Run()
@@ -28,6 +28,8 @@ func SettingsMenu() {
 			ViewAPIKeys()
 		case "Delete API Key":
 			DeleteAPIKey()
+		case "Flush DB":
+			FlushDB()
 		case "Back to Main Menu":
 			return
 		}
@@ -183,4 +185,14 @@ func maskAPIKey(apiKey string) string {
 		return strings.Repeat("*", len(apiKey))
 	}
 	return apiKey[:4] + strings.Repeat("*", len(apiKey)-8) + apiKey[len(apiKey)-4:]
+}
+
+func FlushDB() {
+	err := db.FlushDB()
+	if err != nil {
+		fmt.Printf("Failed to flush the database: %v\n", err)
+		return
+	}
+	fmt.Println("Database flushed successfully.")
+	return
 }
