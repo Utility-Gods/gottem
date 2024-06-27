@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS chats (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Messages table
+-- Messages ta
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id INTEGER NOT NULL,

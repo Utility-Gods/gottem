@@ -13,6 +13,14 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
+type EditorMode int
+
+const (
+	NormalMode EditorMode = iota
+	VisualMode
+	InsertMode
+)
+
 type Editor struct {
 	screen        tcell.Screen
 	app           *api.App
@@ -26,6 +34,10 @@ type Editor struct {
 	selectedAPI   int
 	apiSelectMode bool
 	logger        *log.Logger
+	mode          EditorMode
+	selection     struct {
+		start, end struct{ x, y int }
+	}
 }
 
 func NewEditor(app *api.App, chatID int, messages []db.Message) (*Editor, error) {
@@ -80,11 +92,12 @@ func (e *Editor) loadMessages() {
 	}
 	e.logger.Printf("Loaded %d messages", len(e.messages))
 }
+
 func (e *Editor) Run() error {
 	defer e.screen.Fini()
 	e.logger.Println("Editor running")
 
-	e.status = "Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit and return to main menu"
+	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
 
 	for {
 		e.draw()
@@ -107,25 +120,41 @@ func (e *Editor) Run() error {
 
 func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	e.logger.Printf("Key event: key=%v rune=%v mod=%v", ev.Key(), ev.Rune(), ev.Modifiers())
+
 	if e.apiSelectMode {
-		switch ev.Key() {
-		case tcell.KeyLeft:
-			e.cycleAPI(false)
-		case tcell.KeyRight:
-			e.cycleAPI(true)
-		case tcell.KeyEnter:
-			e.apiSelectMode = false
-			e.status = fmt.Sprintf("API set to: %s", e.apis[e.selectedAPI].Name)
-		case tcell.KeyEscape:
-			e.apiSelectMode = false
-			e.status = "API selection cancelled"
-		default:
-			return false
-		}
-		e.draw()
-		return false
+		return e.handleAPISelectModeKey(ev)
 	}
 
+	switch e.mode {
+	case NormalMode:
+		return e.handleNormalModeKey(ev)
+	case VisualMode:
+		return e.handleVisualModeKey(ev)
+	case InsertMode:
+		return e.handleInsertModeKey(ev)
+	}
+
+	return false
+}
+
+func (e *Editor) handleAPISelectModeKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyLeft:
+		e.cycleAPI(false)
+	case tcell.KeyRight:
+		e.cycleAPI(true)
+	case tcell.KeyEnter:
+		e.apiSelectMode = false
+		e.status = fmt.Sprintf("API set to: %s", e.apis[e.selectedAPI].Name)
+	case tcell.KeyEscape:
+		e.apiSelectMode = false
+		e.status = "API selection cancelled"
+	}
+	e.draw()
+	return false
+}
+
+func (e *Editor) handleNormalModeKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyCtrlQ:
 		e.logger.Println("Quit command received")
@@ -137,30 +166,125 @@ func (e *Editor) handleKeyEvent(ev *tcell.EventKey) bool {
 	case tcell.KeyCtrlJ:
 		e.apiSelectMode = true
 		e.selectAPI()
-
-	case tcell.KeyUp:
-		e.logger.Println("Cursor moved up")
-		e.moveCursor(0, -1)
-	case tcell.KeyDown:
-		e.logger.Println("Cursor moved down")
-		e.moveCursor(0, 1)
-	case tcell.KeyLeft:
-		e.logger.Println("Cursor moved left")
-		e.moveCursor(-1, 0)
-	case tcell.KeyRight:
-		e.logger.Println("Cursor moved right")
-		e.moveCursor(1, 0)
-	case tcell.KeyEnter:
-		e.logger.Println("New line inserted")
-		e.insertNewLine()
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		e.logger.Println("Backspace pressed")
-		e.backspace()
-	default:
-		e.logger.Printf("Character inserted: %c", ev.Rune())
-		e.insertChar(ev.Rune())
+	case tcell.KeyRune:
+		switch ev.Rune() {
+		case 'v':
+			e.enterVisualMode()
+		case 'i':
+			e.enterInsertMode()
+		case 'h':
+			e.moveCursor(-1, 0)
+		case 'j':
+			e.moveCursor(0, 1)
+		case 'k':
+			e.moveCursor(0, -1)
+		case 'l':
+			e.moveCursor(1, 0)
+		}
 	}
 	return false
+}
+
+func (e *Editor) handleVisualModeKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyEscape:
+		e.exitVisualMode()
+	case tcell.KeyRune:
+		switch ev.Rune() {
+		case 'h':
+			e.moveSelection(-1, 0)
+		case 'j':
+			e.moveSelection(0, 1)
+		case 'k':
+			e.moveSelection(0, -1)
+		case 'l':
+			e.moveSelection(1, 0)
+		case 'y':
+			e.yankSelection()
+		case 'd':
+			e.deleteSelection()
+		}
+	}
+	return false
+}
+
+func (e *Editor) handleInsertModeKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyEscape:
+		e.exitInsertMode()
+	case tcell.KeyEnter:
+		e.insertNewLine()
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		e.backspace()
+	default:
+		if ev.Key() == tcell.KeyRune {
+			e.insertChar(ev.Rune())
+		}
+	}
+	return false
+}
+
+func (e *Editor) enterVisualMode() {
+	e.mode = VisualMode
+	e.selection.start = e.cursor
+	e.selection.end = e.cursor
+	e.status = "Visual Mode | Esc: Exit, h/j/k/l: Move selection, y: Yank, d: Delete"
+	e.logger.Println("Entered Visual Mode")
+}
+
+func (e *Editor) exitVisualMode() {
+	e.mode = NormalMode
+	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
+	e.logger.Println("Exited Visual Mode")
+}
+
+func (e *Editor) enterInsertMode() {
+	e.mode = InsertMode
+	e.status = "Insert Mode | Esc: Exit"
+	e.logger.Println("Entered Insert Mode")
+}
+
+func (e *Editor) exitInsertMode() {
+	e.mode = NormalMode
+	e.status = "Normal Mode | Ctrl+E: Send query, Ctrl+J: Select API, Ctrl+Q: Quit, v: Visual Mode, i: Insert Mode"
+	e.logger.Println("Exited Insert Mode")
+}
+
+func (e *Editor) moveSelection(dx, dy int) {
+	newX, newY := e.selection.end.x+dx, e.selection.end.y+dy
+	if newY >= 0 && newY < len(e.content) {
+		if newX >= 0 && newX <= len(e.content[newY]) {
+			e.selection.end.x = newX
+			e.selection.end.y = newY
+			e.cursor = e.selection.end
+			e.adjustScroll()
+		}
+	}
+	e.logger.Printf("Selection end moved to (%d, %d)", e.selection.end.x, e.selection.end.y)
+}
+
+func (e *Editor) yankSelection() {
+	// Implement clipboard functionality here
+	e.status = "Selection yanked"
+	e.exitVisualMode()
+}
+
+func (e *Editor) deleteSelection() {
+	start, end := e.selection.start, e.selection.end
+	if start.y > end.y || (start.y == end.y && start.x > end.x) {
+		start, end = end, start
+	}
+
+	if start.y == end.y {
+		e.content[start.y] = e.content[start.y][:start.x] + e.content[start.y][end.x:]
+	} else {
+		e.content[start.y] = e.content[start.y][:start.x] + e.content[end.y][end.x:]
+		e.content = append(e.content[:start.y+1], e.content[end.y+1:]...)
+	}
+
+	e.cursor = start
+	e.status = "Selection deleted"
+	e.exitVisualMode()
 }
 
 func (e *Editor) quitEditor() {
@@ -175,13 +299,18 @@ func (e *Editor) draw() {
 	e.screen.Clear()
 	width, height := e.screen.Size()
 
-	// Draw content
-	for y := 0; y < height-2; y++ {
+	contentHeight := height - 4 // Reserve 4 lines for the status bar
+
+	for y := 0; y < contentHeight; y++ {
 		if y+e.scroll < len(e.content) {
 			line := e.content[y+e.scroll]
 			for x, ch := range []rune(line) {
 				if x < width {
-					e.screen.SetContent(x, y, ch, nil, tcell.StyleDefault)
+					style := tcell.StyleDefault
+					if e.isSelected(x, y+e.scroll) {
+						style = style.Reverse(true)
+					}
+					e.screen.SetContent(x, y, ch, nil, style)
 				}
 			}
 		}
@@ -189,37 +318,89 @@ func (e *Editor) draw() {
 
 	// Draw cursor
 	cursorY := e.cursor.y - e.scroll
-	if cursorY >= 0 && cursorY < height-2 {
+	if cursorY >= 0 && cursorY < contentHeight {
 		e.screen.ShowCursor(e.cursor.x, cursorY)
 	} else {
 		e.screen.HideCursor()
 	}
+
+	// Draw multiline status bar
+	e.drawStatusBar(width, height)
 
 	// Draw API selection status if in API select mode
 	if e.apiSelectMode {
 		apiStatus := fmt.Sprintf("< %s >", e.apis[e.selectedAPI].Name)
 		startX := (width - len(apiStatus)) / 2
 		for i, ch := range apiStatus {
-			e.screen.SetContent(startX+i, height-2, ch, nil, tcell.StyleDefault.Reverse(true))
+			e.screen.SetContent(startX+i, height-5, ch, nil, tcell.StyleDefault.Reverse(true))
 		}
 	}
 
-	// Draw status bar
-	statusBarY := height - 1
-	statusStyle := tcell.StyleDefault.Background(tcell.ColorNavy).Foreground(tcell.ColorWhite)
-
-	// Show current API
-	currentAPI := fmt.Sprintf("API: %s", e.apis[e.selectedAPI].Name)
-	drawText(e.screen, 0, statusBarY, width/3, currentAPI, statusStyle)
-
-	// Show cursor position
-	cursorPos := fmt.Sprintf("Ln %d, Col %d", e.cursor.y+1, e.cursor.x+1)
-	drawText(e.screen, width/3, statusBarY, width/3, cursorPos, statusStyle)
-
-	// Show status message
-	drawText(e.screen, 2*width/3, statusBarY, width/3, e.status, statusStyle)
-
 	e.screen.Show()
+}
+
+func (e *Editor) drawStatusBar(width, height int) {
+	statusStyle := tcell.StyleDefault.
+		Background(tcell.ColorNavy).
+		Foreground(tcell.ColorWhite)
+
+	if e.apiSelectMode {
+		statusStyle = tcell.StyleDefault.Background(tcell.ColorFloralWhite).Foreground(tcell.ColorRed)
+		modeLine := fmt.Sprintf("Mode: %s | API: %s | press j/k to change between APIs", e.getModeString(), e.apis[e.selectedAPI].Name)
+		e.drawStatusBarLine(modeLine, width, height-4, statusStyle)
+	} else {
+		// Line 1: Mode and API information
+		modeLine := fmt.Sprintf("Mode: %s | API: %s", e.getModeString(), e.apis[e.selectedAPI].Name)
+		e.drawStatusBarLine(modeLine, width, height-4, statusStyle)
+	}
+
+	// Line 2: Cursor position and basic commands
+	cursorLine := fmt.Sprintf("Ln %d, Col %d | Ctrl+E: Send Query | Ctrl+J: Select API | Ctrl+Q: Quit", e.cursor.y+1, e.cursor.x+1)
+	e.drawStatusBarLine(cursorLine, width, height-3, statusStyle)
+
+	// Line 3 & 4: Mode-specific instructions
+	instructions := e.getModeInstructions()
+	e.drawStatusBarLine(instructions[0], width, height-2, statusStyle)
+	e.drawStatusBarLine(instructions[1], width, height-1, statusStyle)
+}
+
+func (e *Editor) drawStatusBarLine(text string, width, y int, style tcell.Style) {
+	for x := 0; x < width; x++ {
+		if x < len(text) {
+			e.screen.SetContent(x, y, rune(text[x]), nil, style)
+		} else {
+			e.screen.SetContent(x, y, ' ', nil, style)
+		}
+	}
+}
+
+func (e *Editor) getModeString() string {
+	switch e.mode {
+	case NormalMode:
+		return "Normal"
+	case VisualMode:
+		return "Visual"
+	case InsertMode:
+		return "Insert"
+	default:
+		return "Unknown"
+	}
+}
+
+func (e *Editor) getModeInstructions() [2]string {
+	var instructions [2]string
+	switch e.mode {
+	case NormalMode:
+		instructions[0] = "v: Enter Visual Mode | i: Enter Insert Mode"
+		instructions[1] = "h/j/k/l: Move cursor | gg: Go to top | G: Go to bottom"
+	case VisualMode:
+		instructions[0] = "Esc: Exit Visual Mode | h/j/k/l: Extend selection"
+		instructions[1] = "y: Yank selection | d: Delete selection"
+	case InsertMode:
+		instructions[0] = "Esc: Exit Insert Mode"
+		instructions[1] = "Type to insert text | Enter: New line | Backspace: Delete"
+	}
+	return instructions
 }
 
 // Helper function to draw text with proper truncation
@@ -252,6 +433,35 @@ func (e *Editor) moveCursor(dx, dy int) {
 	}
 	e.adjustScroll()
 	e.logger.Printf("Cursor moved from (%d, %d) to (%d, %d)", oldX, oldY, e.cursor.x, e.cursor.y)
+}
+
+func (e *Editor) isSelected(x, y int) bool {
+	if e.mode != VisualMode {
+		return false
+	}
+
+	start, end := e.selection.start, e.selection.end
+	if start.y > end.y || (start.y == end.y && start.x > end.x) {
+		start, end = end, start
+	}
+
+	if y < start.y || y > end.y {
+		return false
+	}
+
+	if y == start.y && y == end.y {
+		return x >= start.x && x < end.x
+	}
+
+	if y == start.y {
+		return x >= start.x
+	}
+
+	if y == end.y {
+		return x < end.x
+	}
+
+	return true
 }
 
 func (e *Editor) insertNewLine() {
@@ -335,33 +545,51 @@ func (e *Editor) sendQuery() {
 }
 
 func (e *Editor) selectAPI() {
-	e.logger.Println("Selecting API")
-	currentAPI := e.apis[e.selectedAPI].Name
-	e.status = fmt.Sprintf("Current API: %s. Enter number to change (1-%d), or any other key to cancel.", currentAPI, len(e.apis))
+	e.logger.Println("Entering API selection mode")
+	e.apiSelectMode = true
+	e.status = "Use ← → arrows to change API, Enter to confirm, Esc to cancel"
 	e.draw()
 	e.screen.Show()
 
-	ev := e.screen.PollEvent()
-	switch ev := ev.(type) {
-	case *tcell.EventKey:
-		if ev.Key() == tcell.KeyRune && ev.Rune() >= '1' && ev.Rune() <= rune('0'+len(e.apis)) {
-			e.selectedAPI = int(ev.Rune() - '1')
-			e.status = fmt.Sprintf("API changed to: %s", e.apis[e.selectedAPI].Name)
-			e.logger.Printf("API changed to: %s", e.apis[e.selectedAPI].Name)
-		} else {
-			e.status = fmt.Sprintf("API selection cancelled. Current API: %s", currentAPI)
-			e.logger.Println("API selection cancelled")
+	for e.apiSelectMode {
+		ev := e.screen.PollEvent()
+		switch ev := ev.(type) {
+		case *tcell.EventKey:
+			switch ev.Key() {
+			case tcell.KeyLeft:
+				e.cycleAPI(false)
+				e.draw()
+				e.screen.Show()
+			case tcell.KeyRight:
+				e.cycleAPI(true)
+				e.draw()
+				e.screen.Show()
+			case tcell.KeyEnter:
+				e.apiSelectMode = false
+				e.status = fmt.Sprintf("API set to: %s", e.apis[e.selectedAPI].Name)
+				e.logger.Printf("API changed to: %s", e.apis[e.selectedAPI].Name)
+			case tcell.KeyEscape:
+				e.apiSelectMode = false
+				e.status = "API selection cancelled"
+				e.logger.Println("API selection cancelled")
+			}
+		}
+
+		if !e.apiSelectMode {
+			break
 		}
 	}
+
+	e.draw()
+	e.screen.Show()
 }
 
 func (e *Editor) cycleAPI(forward bool) {
-	e.logger.Println("cycleAPI called...")
 	if forward {
 		e.selectedAPI = (e.selectedAPI + 1) % len(e.apis)
 	} else {
 		e.selectedAPI = (e.selectedAPI - 1 + len(e.apis)) % len(e.apis)
 	}
-	e.status = fmt.Sprintf("Selected API: %s (Use left/right arrows to change, Enter to confirm)", e.apis[e.selectedAPI].Name)
-	return
+	e.status = fmt.Sprintf("Selected API: %s (Use ← → arrows to change, Enter to confirm, Esc to cancel)", e.apis[e.selectedAPI].Name)
+	e.logger.Printf("Cycled to API: %s", e.apis[e.selectedAPI].Name)
 }
