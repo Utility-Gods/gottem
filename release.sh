@@ -63,7 +63,8 @@ fi
 echo $NEW_VERSION > $VERSION_FILE
 
 # Update version in code (assuming you have a version.go file)
-sed -i '' "s/const Version = .*/const Version = \"$NEW_VERSION\"/" version.go
+sed -i '' "s/const Version = \".*\"/const Version = \"$NEW_VERSION\"/" version.go
+# sed -i '' "s/const Version = .*/const Version = \"$NEW_VERSION\"/" version.go
 
 # Commit version update
 git add $VERSION_FILE version.go
